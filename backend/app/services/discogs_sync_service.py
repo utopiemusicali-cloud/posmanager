@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import zipfile
 from datetime import datetime
 
 import httpx
@@ -53,17 +54,30 @@ async def sync_inventory(token: str, dest_dir: str) -> dict:
             csv_resp = await dl.get(latest_export["download_url"])
             csv_resp.raise_for_status()
 
-        # 4. Salva su disco
+        # 4. Salva su disco ed estrai se è uno ZIP
         os.makedirs(dest_dir, exist_ok=True)
         filename = latest_export["filename"]
         filepath = os.path.join(dest_dir, filename)
         with open(filepath, "wb") as f:
             f.write(csv_resp.content)
 
-        rows = max(0, len(csv_resp.text.splitlines()) - 1)  # escludi header
+        csv_filename = filename
+        rows = 0
+
+        if filename.endswith(".zip"):
+            with zipfile.ZipFile(filepath, "r") as zf:
+                csv_names = [n for n in zf.namelist() if n.endswith(".csv")]
+                if csv_names:
+                    csv_filename = csv_names[0]
+                    zf.extract(csv_filename, dest_dir)
+                    csv_path = os.path.join(dest_dir, csv_filename)
+                    with open(csv_path, encoding="utf-8", errors="replace") as cf:
+                        rows = max(0, sum(1 for _ in cf) - 1)
+        else:
+            rows = max(0, len(csv_resp.text.splitlines()) - 1)
 
         return {
-            "filename": filename,
+            "filename": csv_filename,
             "rows": rows,
             "export_id": latest_export["id"],
             "downloaded_at": datetime.now().isoformat(),
