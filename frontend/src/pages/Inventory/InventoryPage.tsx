@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Table, Input, Tabs, Tag, Button, message } from 'antd'
-import { SearchOutlined, ReloadOutlined } from '@ant-design/icons'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Table, Input, Tabs, Tag, Button, message, Alert } from 'antd'
+import { PlusOutlined, SearchOutlined, SyncOutlined } from '@ant-design/icons'
 import client from '@/api/client'
+import AddInventoryModal from './AddInventoryModal'
 
 async function getInventory(status?: string, q?: string, page = 1) {
   const res = await client.get('/api/v1/inventory', {
@@ -11,11 +12,16 @@ async function getInventory(status?: string, q?: string, page = 1) {
   return res.data
 }
 
+async function syncDiscogs() {
+  const res = await client.post('/api/v1/inventory/sync')
+  return res.data
+}
+
 function InventoryTable({ status }: { status: string }) {
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
 
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: ['inventory', status, search, page],
     queryFn: () => getInventory(status, search, page),
   })
@@ -44,7 +50,6 @@ function InventoryTable({ status }: { status: string }) {
           style={{ width: 320 }}
           allowClear
         />
-        <Button icon={<ReloadOutlined />} onClick={() => refetch()}>Ricarica</Button>
         <span style={{ lineHeight: '32px', color: '#888' }}>{data?.total ?? 0} articoli</span>
       </div>
       <Table
@@ -67,10 +72,64 @@ const tabItems = [
 ]
 
 export default function InventoryPage() {
+  const [syncing, setSyncing] = useState(false)
+  const [syncInfo, setSyncInfo] = useState<string | null>(null)
+  const [addOpen, setAddOpen] = useState(false)
+  const qc = useQueryClient()
+
+  const handleSync = async () => {
+    setSyncing(true)
+    setSyncInfo(null)
+    try {
+      const res = await syncDiscogs()
+      setSyncInfo(`✅ ${res.rows} articoli scaricati (${res.filename})`)
+      // Invalida tutte le query inventory per ricaricare i dati
+      qc.invalidateQueries({ queryKey: ['inventory'] })
+    } catch {
+      message.error('Errore durante il sync con Discogs. Controlla i log del server.')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   return (
     <div>
-      <h2 style={{ marginTop: 0 }}>📦 Inventario</h2>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+        <h2 style={{ margin: 0 }}>📦 Inventario</h2>
+        <Button
+          type="primary"
+          icon={<PlusOutlined />}
+          onClick={() => setAddOpen(true)}
+        >
+          Add Inventory
+        </Button>
+        <Button
+          icon={<SyncOutlined spin={syncing} />}
+          onClick={handleSync}
+          loading={syncing}
+        >
+          {syncing ? 'Download da Discogs...' : 'Aggiorna da Discogs'}
+        </Button>
+        {syncing && (
+          <span style={{ color: '#888', fontSize: 13 }}>
+            Può richiedere 2-5 minuti...
+          </span>
+        )}
+      </div>
+      {syncInfo && (
+        <Alert message={syncInfo} type="success" showIcon closable
+          style={{ marginBottom: 12 }} onClose={() => setSyncInfo(null)} />
+      )}
       <Tabs items={tabItems} size="large" />
+
+      <AddInventoryModal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        onSuccess={() => {
+          setAddOpen(false)
+          qc.invalidateQueries({ queryKey: ['inventory'] })
+        }}
+      />
     </div>
   )
 }

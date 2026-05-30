@@ -11,8 +11,9 @@ from typing import Any
 
 import pandas as pd
 
-# Percorsi di default (stessa macchina del vecchio GP V3)
-_CSV_DIR = os.getenv("INVENTORY_CSV_DIR", r"G:\Il mio Drive\PointOfSale\Inventario")
+from app.config import settings
+
+_CSV_DIR = settings.INVENTORY_CSV_DIR
 _NOD_UNOFF = os.getenv(
     "NOD_UNOFF_PATH",
     r"G:\Il mio Drive\PointOfSale\Magazzino\NOD - UnOFF\NOD-UNOFF.xlsx",

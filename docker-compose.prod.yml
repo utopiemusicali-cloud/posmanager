@@ -55,7 +55,7 @@ services:
       FIRST_ADMIN_PASSWORD: ${FIRST_ADMIN_PASSWORD}
       INVENTORY_CSV_DIR: /inventory
     volumes:
-      - inventory_data:/inventory:ro
+      - inventory_data:/inventory
     expose:
       - "8000"
     depends_on:
