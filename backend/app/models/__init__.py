@@ -10,6 +10,7 @@ from app.models.daily_closure import DailyClosure
 from app.models.digital_transaction import DigitalTransaction
 from app.models.deletion_log import DeletionLog
 from app.models.cost_center import CostCenter
+from app.models.inventory_item import InventoryItem
 
 __all__ = [
     "Base",
@@ -24,4 +25,5 @@ __all__ = [
     "DigitalTransaction",
     "DeletionLog",
     "CostCenter",
+    "InventoryItem",
 ]
