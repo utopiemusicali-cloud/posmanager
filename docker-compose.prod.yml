@@ -54,6 +54,7 @@ services:
       FIRST_ADMIN_USERNAME: ${FIRST_ADMIN_USERNAME}
       FIRST_ADMIN_PASSWORD: ${FIRST_ADMIN_PASSWORD}
       INVENTORY_CSV_DIR: /inventory
+      DISCOGS_TOKEN: ${DISCOGS_TOKEN}
     volumes:
       - inventory_data:/inventory
     expose:
