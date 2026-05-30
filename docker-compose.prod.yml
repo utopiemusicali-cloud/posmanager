@@ -1,0 +1,104 @@
+# Produzione — HTTP (porta 80) + HTTPS (porta 443) + certbot
+# Ottimizzato per VPS 4 vCPU / 8 GB RAM / 75 GB
+#
+# Prima del primo SSL:
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Dopo aver ottenuto i certificati (scripts/init_ssl.sh):
+#   docker compose -f docker-compose.prod.yml -f docker-compose.ssl.yml up -d --force-recreate nginx
+
+services:
+  mysql:
+    image: mysql:8.0
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      # Tuning per 8 GB RAM: innodb_buffer_pool_size = 2 GB
+      MYSQL_INNODB_BUFFER_POOL_SIZE: 2G
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --innodb-buffer-pool-size=2G
+      --innodb-log-file-size=256M
+      --max-connections=200
+      --slow-query-log=1
+      --slow-query-log-file=/var/log/mysql/slow.log
+      --long-query-time=2
+    volumes:
+      - mysql_data:/var/lib/mysql
+    expose:
+      - "3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    mem_limit: 3g
+    mem_reservation: 2g
+
+  backend:
+    build: ./backend
+    restart: always
+    # 4 workers = 1 per vCPU (regola comune: 2×vCPU per I/O-bound async)
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --timeout-keep-alive 75
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      SECRET_KEY: ${SECRET_KEY}
+      ALGORITHM: ${ALGORITHM}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
+      CORS_ORIGINS: "https://${DOMAIN},http://${DOMAIN}"
+      FIRST_ADMIN_USERNAME: ${FIRST_ADMIN_USERNAME}
+      FIRST_ADMIN_PASSWORD: ${FIRST_ADMIN_PASSWORD}
+      INVENTORY_CSV_DIR: /inventory
+    volumes:
+      - inventory_data:/inventory:ro
+    expose:
+      - "8000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    mem_limit: 1g
+    mem_reservation: 512m
+
+  nginx:
+    image: nginx:alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/certbot/conf:/etc/letsencrypt:ro
+      - ./nginx/certbot/www:/var/www/certbot:ro
+      - frontend_static:/usr/share/nginx/html:ro
+    depends_on:
+      - backend
+    mem_limit: 128m
+
+  frontend_builder:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.builder
+    volumes:
+      - frontend_static:/app/dist
+    # Si avvia, copia i file nel volume e termina
+    restart: "no"
+
+  certbot:
+    image: certbot/certbot
+    restart: unless-stopped
+    volumes:
+      - ./nginx/certbot/conf:/etc/letsencrypt
+      - ./nginx/certbot/www:/var/www/certbot
+    # Rinnovo automatico ogni 12 ore
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew --quiet; sleep 12h & wait $${!}; done;'"
+    mem_limit: 64m
+
+volumes:
+  mysql_data:
+  frontend_static:
+  inventory_data:

@@ -1,0 +1,67 @@
+# Deploy locale su mini PC in LAN — Windows + Docker Desktop
+# Accesso da qualsiasi dispositivo in rete: http://<IP-del-mini-pc>
+#
+# Avvio:  docker compose -f docker-compose.local.yml up --build -d
+# Stop:   docker compose -f docker-compose.local.yml down
+# Log:    docker compose -f docker-compose.local.yml logs -f
+
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    # Non esporre MySQL all'esterno in produzione LAN
+    expose:
+      - "3306"
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      SECRET_KEY: ${SECRET_KEY}
+      ALGORITHM: ${ALGORITHM}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
+      # CORS gestito da nginx — basta l'IP del mini PC e localhost
+      CORS_ORIGINS: "http://localhost,http://${LOCAL_IP},http://${LOCAL_IP}:80"
+      FIRST_ADMIN_USERNAME: ${FIRST_ADMIN_USERNAME}
+      FIRST_ADMIN_PASSWORD: ${FIRST_ADMIN_PASSWORD}
+      INVENTORY_CSV_DIR: ${INVENTORY_CSV_DIR:-/inventory}
+    volumes:
+      # Monta la cartella inventario CSV/Excel (opzionale)
+      # Windows path: usa slash forward es. C:/Users/... oppure lascia vuoto
+      - ${INVENTORY_HOST_PATH:-./empty_inventory}:/inventory:ro
+    expose:
+      - "8000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # URL vuoto = nginx proxia /api → backend internamente
+        VITE_API_URL: ""
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  mysql_data:

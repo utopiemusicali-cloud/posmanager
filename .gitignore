@@ -1,0 +1,32 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Build artifacts
+dist/
+frontend/dist/
+
+# Node
+node_modules/
+
+# Database files
+*.db
+*.sqlite
+
+# Backup MySQL (generati da backup_mysql.sh)
+backups/
+
+# Let's Encrypt / certbot (generati su server)
+nginx/certbot/conf/
+nginx/certbot/www/
+
+# Nginx SSL config generata da init_ssl.sh (usa il template)
+# (non escludere default.conf perché è la config HTTP-only di fase 1)

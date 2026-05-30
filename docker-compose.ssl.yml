@@ -1,0 +1,16 @@
+# Override da usare DOPO aver ottenuto i certificati SSL.
+# Attiva il server HTTPS in nginx.
+#
+# Uso:
+#   docker compose -f docker-compose.prod.yml -f docker-compose.ssl.yml up -d --force-recreate nginx
+#
+# Questo file non cambia nulla da solo, semplicemente assicura che nginx
+# carichi la configurazione SSL (che viene montata da ./nginx/conf.d/).
+
+services:
+  nginx:
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/certbot/conf:/etc/letsencrypt:ro
+      - ./nginx/certbot/www:/var/www/certbot:ro
+      - frontend_static:/usr/share/nginx/html:ro
