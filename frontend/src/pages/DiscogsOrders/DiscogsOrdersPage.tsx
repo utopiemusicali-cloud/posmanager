@@ -1,9 +1,9 @@
-import { useMemo, useState, useEffect, useRef } from 'react'
+import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Table, Select, Tag, Button, Modal, Form, Input, InputNumber,
   Row, Col, Card, Descriptions, Space, Checkbox, Alert,
-  message, Typography, Spin, Divider, Tooltip, Image,
+  message, Typography, Spin, Divider, Tooltip,
 } from 'antd'
 import type { ColumnType } from 'antd/es/table'
 import {
@@ -119,6 +119,121 @@ async function doCancel(orderId: string, reason: string) {
 
 // ── Modal dettaglio ────────────────────────────────────────────────────────────
 
+// ── Gallery foto release ───────────────────────────────────────────────────────
+
+interface GalleryPhoto { uri: string; thumb: string }
+
+function PhotoGallery({ releaseId, title, onClose }: {
+  releaseId: number; title: string; onClose: () => void
+}) {
+  const [photos, setPhotos] = useState<GalleryPhoto[]>([])
+  const [idx, setIdx] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [zoom, setZoom] = useState(false)
+
+  useEffect(() => {
+    setLoading(true)
+    setIdx(0)
+    client.get(`/api/v1/integrations/discogs/releases/${releaseId}/images`)
+      .then(r => setPhotos(r.data.images ?? []))
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [releaseId])
+
+  const prev = useCallback(() => setIdx(i => Math.max(0, i - 1)), [])
+  const next = useCallback(() => setIdx(i => Math.min(photos.length - 1, i + 1)), [photos.length])
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowLeft') prev()
+      if (e.key === 'ArrowRight') next()
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [prev, next, onClose])
+
+  const current = photos[idx]
+
+  return (
+    <Modal open title={title} onCancel={onClose} footer={null} width={720} centered>
+      {loading && <div style={{ textAlign: 'center', padding: 40 }}><Spin size="large" /></div>}
+      {!loading && photos.length === 0 && <Text type="secondary">Nessuna immagine disponibile</Text>}
+      {!loading && current && (
+        <>
+          {/* Immagine principale con frecce overlay */}
+          <div style={{ position: 'relative', textAlign: 'center', userSelect: 'none' }}>
+            {/* Freccia sinistra — vicina all'immagine */}
+            {idx > 0 && (
+              <button onClick={prev} style={{
+                position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)',
+                zIndex: 10, background: 'rgba(0,0,0,0.6)', border: 'none', borderRadius: '50%',
+                width: 38, height: 38, cursor: 'pointer', color: '#fff', fontSize: 16,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <LeftOutlined />
+              </button>
+            )}
+
+            <img
+              src={current.uri}
+              alt={title}
+              onClick={() => setZoom(z => !z)}
+              onWheel={e => {
+                if (e.deltaY < 0) setZoom(true)
+                else setZoom(false)
+              }}
+              style={{
+                maxWidth: zoom ? '150%' : '100%',
+                maxHeight: zoom ? 'none' : 520,
+                objectFit: 'contain',
+                cursor: zoom ? 'zoom-out' : 'zoom-in',
+                borderRadius: 8,
+                transition: 'max-width 0.2s',
+              }}
+            />
+
+            {/* Freccia destra — vicina all'immagine */}
+            {idx < photos.length - 1 && (
+              <button onClick={next} style={{
+                position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+                zIndex: 10, background: 'rgba(0,0,0,0.6)', border: 'none', borderRadius: '50%',
+                width: 38, height: 38, cursor: 'pointer', color: '#fff', fontSize: 16,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <RightOutlined />
+              </button>
+            )}
+          </div>
+
+          {/* Contatore + thumbnails */}
+          <div style={{ textAlign: 'center', marginTop: 12, color: '#888', fontSize: 12 }}>
+            {idx + 1} / {photos.length} · scroll o click per zoom · ← → frecce tastiera
+          </div>
+          {photos.length > 1 && (
+            <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginTop: 10, flexWrap: 'wrap' }}>
+              {photos.map((p, i) => (
+                <img key={i} src={p.thumb} alt=""
+                  onClick={() => setIdx(i)}
+                  style={{
+                    width: 52, height: 52, objectFit: 'cover', borderRadius: 4, cursor: 'pointer',
+                    border: i === idx ? '2px solid #1677ff' : '2px solid transparent',
+                    opacity: i === idx ? 1 : 0.6,
+                    transition: 'opacity 0.15s',
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </Modal>
+  )
+}
+
+
+// ── Modal dettaglio ordine ─────────────────────────────────────────────────────
+
 function OrderModal({ order, onClose, onRefresh }: {
   order: Order | null; onClose: () => void; onRefresh: () => void
 }) {
@@ -126,6 +241,7 @@ function OrderModal({ order, onClose, onRefresh }: {
   const [cancelForm] = Form.useForm()
   const [tab, setTab] = useState<'info' | 'ship' | 'cancel' | 'messages'>('info')
   const [focusedItem, setFocusedItem] = useState(0)
+  const [gallery, setGallery] = useState<{id:number;title:string}|null>(null)
   const [messages, setMessages] = useState<Array<{from:{username:string};message:string;timestamp:string}>>([])
   const [msgLoading, setMsgLoading] = useState(false)
   const [msgText, setMsgText] = useState('')
@@ -272,7 +388,7 @@ function OrderModal({ order, onClose, onRefresh }: {
   )
 
   return (
-    <Modal open={!!order} onCancel={() => { setPresent({}); setTab('info'); setFocusedItem(0); setMessages([]); setMsgText(''); onClose() }}
+    <Modal open={!!order} onCancel={() => { setPresent({}); setTab('info'); setFocusedItem(0); setMessages([]); setMsgText(''); setGallery(null); onClose() }}
       title={<Space>
         <span>Ordine {order.id}</span>
         <Tag color={STATUS_COLOR[order.status] ?? 'default'}>{order.status}</Tag>
@@ -331,10 +447,11 @@ function OrderModal({ order, onClose, onRefresh }: {
           <Divider orientation="left" plain>
             Articoli ({order.items?.length ?? 0}) — clicca ✓/✗ per segnare disponibilità · foto per ingrandire
           </Divider>
-          <Image.PreviewGroup>
             {(order.items || []).map((item, i) => {
               const isPresent = currentPresent[i] !== false
               const thumb = item.release?.thumbnail
+              const releaseId = item.release?.id
+              const releaseTitle = item.release?.description ?? ''
               return (
                 <div id={`order-item-${i}`} key={i} style={{
                   display: 'flex', alignItems: 'flex-start', gap: 14, marginBottom: 10,
@@ -342,46 +459,23 @@ function OrderModal({ order, onClose, onRefresh }: {
                   background: isPresent ? '#f6ffed' : '#fff2f0',
                   border: `1px solid ${isPresent ? '#b7eb8f' : '#ffccc7'}`,
                 }}>
-                  {/* Foto con frecce overlay prev/next */}
-                  <div style={{ flexShrink: 0, position: 'relative', width: 130, height: 110 }}>
-                    {/* Freccia precedente */}
-                    {i > 0 && (
-                      <button onClick={() => setFocusedItem(i - 1)}
-                        style={{
-                          position: 'absolute', left: -16, top: '50%', transform: 'translateY(-50%)',
-                          zIndex: 2, background: 'rgba(0,0,0,0.55)', border: 'none', borderRadius: '50%',
-                          width: 26, height: 26, cursor: 'pointer', color: '#fff',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12,
-                        }}>
-                        <LeftOutlined />
-                      </button>
-                    )}
+                  {/* Solo thumbnail — click apre gallery del release */}
+                  <div style={{ flexShrink: 0, width: 110, height: 110 }}>
                     {thumb ? (
-                      <Image
-                        src={thumb}
-                        width={110}
-                        height={110}
-                        style={{ objectFit: 'cover', borderRadius: 6, cursor: 'zoom-in', display: 'block' }}
-                        preview={{ src: thumb }}
-                        fallback="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='110' height='110'%3E%3Crect width='110' height='110' fill='%23f0f0f0'/%3E%3Ctext x='55' y='62' text-anchor='middle' font-size='32'%3E🎵%3C/text%3E%3C/svg%3E"
+                      <img src={thumb} alt=""
+                        onClick={() => releaseId && setGallery({ id: releaseId, title: releaseTitle })}
+                        style={{
+                          width: 110, height: 110, objectFit: 'cover', borderRadius: 6,
+                          cursor: releaseId ? 'zoom-in' : 'default',
+                          boxShadow: '0 1px 4px rgba(0,0,0,0.15)',
+                        }}
+                        title="Clicca per vedere tutte le foto"
                       />
                     ) : (
                       <div style={{ width: 110, height: 110, background: '#f0f0f0', borderRadius: 6,
                         display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 36 }}>
                         🎵
                       </div>
-                    )}
-                    {/* Freccia successiva */}
-                    {i < (order.items?.length ?? 1) - 1 && (
-                      <button onClick={() => setFocusedItem(i + 1)}
-                        style={{
-                          position: 'absolute', right: -4, top: '50%', transform: 'translateY(-50%)',
-                          zIndex: 2, background: 'rgba(0,0,0,0.55)', border: 'none', borderRadius: '50%',
-                          width: 26, height: 26, cursor: 'pointer', color: '#fff',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12,
-                        }}>
-                        <RightOutlined />
-                      </button>
                     )}
                   </div>
 
@@ -424,7 +518,6 @@ function OrderModal({ order, onClose, onRefresh }: {
                 </div>
               )
             })}
-          </Image.PreviewGroup>
 
           {/* Indirizzo */}
           <Divider orientation="left" plain>Indirizzo Spedizione</Divider>
@@ -557,6 +650,15 @@ function OrderModal({ order, onClose, onRefresh }: {
             Invio con Invio · nuova riga con Shift+Invio
           </Text>
         </div>
+      )}
+
+      {/* Gallery foto release */}
+      {gallery && (
+        <PhotoGallery
+          releaseId={gallery.id}
+          title={gallery.title}
+          onClose={() => setGallery(null)}
+        />
       )}
     </Modal>
   )

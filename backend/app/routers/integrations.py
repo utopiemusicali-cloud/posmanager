@@ -140,6 +140,25 @@ async def cancel_discogs_order(order_id: str, body: CancelPayload):
     return {"ok": True}
 
 
+# ── Immagini di un release ────────────────────────────────────────────────────
+
+@router.get("/discogs/releases/{release_id}/images")
+async def get_release_images(release_id: int):
+    token = _require_token()
+    import httpx
+    headers = {"Authorization": f"Discogs token={token}", "User-Agent": "posmanager/1.0"}
+    async with httpx.AsyncClient(headers=headers, timeout=15) as c:
+        resp = await c.get(f"https://api.discogs.com/releases/{release_id}")
+        resp.raise_for_status()
+        data = resp.json()
+    images = [
+        {"uri": img["uri"], "thumb": img.get("uri150", img["uri"])}
+        for img in data.get("images", [])
+        if img.get("uri")
+    ]
+    return {"images": images, "title": data.get("title", ""), "year": data.get("year", "")}
+
+
 # ── Statuses disponibili ───────────────────────────────────────────────────────
 
 @router.get("/discogs/order-statuses")
