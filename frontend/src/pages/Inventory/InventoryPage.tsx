@@ -50,7 +50,7 @@ function InventoryTable({ status }: { status: string }) {
       <Table
         dataSource={data?.items ?? []}
         columns={columns}
-        rowKey={(r) => `${r.source}-${r.listing_id}`}
+        rowKey={(r: any) => `${r.source}-${r.listing_id}`}
         loading={isLoading}
         size="small"
         scroll={{ x: 1100 }}
