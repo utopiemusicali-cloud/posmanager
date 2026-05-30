@@ -84,7 +84,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile.builder
     volumes:
-      - frontend_static:/app/dist
+      - frontend_static:/output   # /app/dist = build output, /output = volume target
     # Si avvia, copia i file nel volume e termina
     restart: "no"
 
