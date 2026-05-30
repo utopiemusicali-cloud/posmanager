@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Table, Select, Tag, Button, Modal, Form, Input, InputNumber,
   Row, Col, Card, Descriptions, Space, Checkbox, Alert,
-  message, Typography, Spin, Divider, Tooltip,
+  message, Typography, Spin, Divider, Tooltip, Image,
 } from 'antd'
 import type { ColumnType } from 'antd/es/table'
 import {
@@ -28,6 +28,8 @@ interface OrderItem {
   price?: { value: number; currency: string }
   media_condition?: string
   sleeve_condition?: string
+  format?: string
+  location?: string
   id?: number
 }
 
@@ -286,55 +288,80 @@ function OrderModal({ order, onClose, onRefresh }: {
             <Descriptions.Item label="Fee">{fmtEur(order['fee.value'], order['total.currency'])}</Descriptions.Item>
           </Descriptions>
 
-          {/* Articoli con foto e spunta */}
+          {/* Articoli con foto gallery + spunta */}
           <Divider orientation="left" plain>
-            Articoli ({order.items?.length ?? 0}) — clicca ✓/✗ per segnare disponibilità
+            Articoli ({order.items?.length ?? 0}) — clicca ✓/✗ per segnare disponibilità · foto per ingrandire
           </Divider>
-          {(order.items || []).map((item, i) => {
-            const isPresent = currentPresent[i] !== false
-            return (
-              <div key={i} style={{
-                display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8,
-                padding: '8px 12px', borderRadius: 6,
-                background: isPresent ? '#f6ffed' : '#fff2f0',
-                border: `1px solid ${isPresent ? '#b7eb8f' : '#ffccc7'}`,
-              }}>
-                {/* Foto */}
-                {item.release?.thumbnail ? (
-                  <img src={item.release.thumbnail} alt=""
-                    style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 4, flexShrink: 0 }}
-                    onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
-                  />
-                ) : (
-                  <div style={{ width: 56, height: 56, background: '#f0f0f0', borderRadius: 4,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                    fontSize: 20 }}>🎵</div>
-                )}
+          <Image.PreviewGroup>
+            {(order.items || []).map((item, i) => {
+              const isPresent = currentPresent[i] !== false
+              const thumb = item.release?.thumbnail
+              return (
+                <div key={i} style={{
+                  display: 'flex', alignItems: 'flex-start', gap: 14, marginBottom: 10,
+                  padding: '10px 14px', borderRadius: 8,
+                  background: isPresent ? '#f6ffed' : '#fff2f0',
+                  border: `1px solid ${isPresent ? '#b7eb8f' : '#ffccc7'}`,
+                }}>
+                  {/* Foto grande con lightbox */}
+                  <div style={{ flexShrink: 0, width: 110, height: 110 }}>
+                    {thumb ? (
+                      <Image
+                        src={thumb}
+                        width={110}
+                        height={110}
+                        style={{ objectFit: 'cover', borderRadius: 6, cursor: 'zoom-in' }}
+                        preview={{ src: thumb }}
+                        fallback="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='110' height='110'%3E%3Crect width='110' height='110' fill='%23f0f0f0'/%3E%3Ctext x='55' y='62' text-anchor='middle' font-size='32'%3E🎵%3C/text%3E%3C/svg%3E"
+                      />
+                    ) : (
+                      <div style={{ width: 110, height: 110, background: '#f0f0f0', borderRadius: 6,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 36 }}>
+                        🎵
+                      </div>
+                    )}
+                  </div>
 
-                {/* Info */}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap',
-                    overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {item.release?.description ?? '—'}
+                  {/* Info articolo */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 6,
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {item.release?.description ?? '—'}
+                    </div>
+                    {/* Location in grande */}
+                    {item.location && (
+                      <div style={{ fontSize: 15, fontWeight: 700, color: '#1677ff', marginBottom: 4 }}>
+                        📍 {item.location}
+                      </div>
+                    )}
+                    {/* Campi in ordine: Sleeve · Media · Format · Price */}
+                    <div style={{ fontSize: 12, color: '#555', lineHeight: 1.8 }}>
+                      <span>Sleeve: <b>{item.sleeve_condition ?? '—'}</b></span>
+                      <span style={{ margin: '0 8px', color: '#ccc' }}>|</span>
+                      <span>Media: <b>{item.media_condition ?? '—'}</b></span>
+                      {item.format && <>
+                        <span style={{ margin: '0 8px', color: '#ccc' }}>|</span>
+                        <span>Format: <b>{item.format}</b></span>
+                      </>}
+                      <span style={{ margin: '0 8px', color: '#ccc' }}>|</span>
+                      <span>Price: <b>{fmtEur(item.price?.value, item.price?.currency)}</b></span>
+                    </div>
                   </div>
-                  <div style={{ fontSize: 12, color: '#888' }}>
-                    Media: {item.media_condition ?? '—'} · Sleeve: {item.sleeve_condition ?? '—'} ·
-                    {' '}{fmtEur(item.price?.value, item.price?.currency)}
-                  </div>
+
+                  {/* Spunta presente/mancante */}
+                  <Tooltip title={isPresent ? 'Presente — clicca per segnare mancante' : 'Mancante — clicca per segnare presente'}>
+                    <button onClick={() => togglePresent(i)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer',
+                        fontSize: 34, lineHeight: 1, flexShrink: 0 }}>
+                      {isPresent
+                        ? <CheckCircleFilled style={{ color: '#52c41a' }} />
+                        : <CloseCircleFilled style={{ color: '#ff4d4f' }} />}
+                    </button>
+                  </Tooltip>
                 </div>
-
-                {/* Spunta presente/mancante */}
-                <Tooltip title={isPresent ? 'Presente — clicca per segnare mancante' : 'Mancante — clicca per segnare presente'}>
-                  <button onClick={() => togglePresent(i)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 28, lineHeight: 1 }}>
-                    {isPresent
-                      ? <CheckCircleFilled style={{ color: '#52c41a' }} />
-                      : <CloseCircleFilled style={{ color: '#ff4d4f' }} />}
-                  </button>
-                </Tooltip>
-              </div>
-            )
-          })}
+              )
+            })}
+          </Image.PreviewGroup>
 
           {/* Indirizzo */}
           <Divider orientation="left" plain>Indirizzo Spedizione</Divider>
