@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Table, Select, Tag, Button, Modal, Form, Input, InputNumber,
@@ -10,6 +10,7 @@ import {
   ReloadOutlined, SendOutlined, CloseCircleOutlined,
   PrinterOutlined, MailOutlined, WhatsAppOutlined,
   CheckCircleFilled, CloseCircleFilled,
+  LeftOutlined, RightOutlined,
 } from '@ant-design/icons'
 import client from '@/api/client'
 import dayjs from 'dayjs'
@@ -123,7 +124,13 @@ function OrderModal({ order, onClose, onRefresh }: {
 }) {
   const [shipForm] = Form.useForm()
   const [cancelForm] = Form.useForm()
-  const [tab, setTab] = useState<'info' | 'ship' | 'cancel'>('info')
+  const [tab, setTab] = useState<'info' | 'ship' | 'cancel' | 'messages'>('info')
+  const [focusedItem, setFocusedItem] = useState(0)
+  const [messages, setMessages] = useState<Array<{from:{username:string};message:string;timestamp:string}>>([])
+  const [msgLoading, setMsgLoading] = useState(false)
+  const [msgText, setMsgText] = useState('')
+  const [msgSending, setMsgSending] = useState(false)
+  const chatBottomRef = useRef<HTMLDivElement>(null)
   const [carriers, setCarriers] = useState<string[]>([])
   // Spunte per ogni item: true = presente, false = mancante
   const [present, setPresent] = useState<Record<number, boolean>>({})
@@ -149,6 +156,11 @@ function OrderModal({ order, onClose, onRefresh }: {
     onError: () => message.error('Errore durante la cancellazione'),
   })
 
+  // Scroll all'item selezionato via frecce
+  useEffect(() => {
+    document.getElementById(`order-item-${focusedItem}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }, [focusedItem])
+
   // Reset spunte quando cambia ordine
   const initPresent = useMemo(() => {
     const m: Record<number, boolean> = {}
@@ -160,6 +172,30 @@ function OrderModal({ order, onClose, onRefresh }: {
 
   const missingItems = order?.items?.filter((_, i) => currentPresent[i] === false) ?? []
   const hasMissing = missingItems.length > 0
+
+  // Carica messaggi quando si apre il tab messaggi
+  useEffect(() => {
+    if (tab !== 'messages' || !order) return
+    setMsgLoading(true)
+    client.get(`/api/v1/integrations/discogs/orders/${order.id}/messages`)
+      .then(r => { setMessages(r.data.messages ?? []); setTimeout(() => chatBottomRef.current?.scrollIntoView(), 100) })
+      .catch(() => message.error('Errore caricamento messaggi'))
+      .finally(() => setMsgLoading(false))
+  }, [tab, order])
+
+  const sendMessage = async () => {
+    if (!msgText.trim() || !order) return
+    setMsgSending(true)
+    try {
+      await client.post(`/api/v1/integrations/discogs/orders/${order.id}/messages`, { message: msgText })
+      setMsgText('')
+      // Ricarica messaggi
+      const r = await client.get(`/api/v1/integrations/discogs/orders/${order.id}/messages`)
+      setMessages(r.data.messages ?? [])
+      setTimeout(() => chatBottomRef.current?.scrollIntoView(), 100)
+    } catch { message.error('Errore invio messaggio') }
+    finally { setMsgSending(false) }
+  }
 
   if (!order) return null
 
@@ -223,17 +259,20 @@ function OrderModal({ order, onClose, onRefresh }: {
         Print
       </Button>
       <Divider type="vertical" />
-      <Button type="primary" icon={<SendOutlined />}
+      <Button type={tab === 'ship' ? 'primary' : 'default'} icon={<SendOutlined />}
         disabled={isShipped || isCancelled}
         onClick={() => setTab('ship')}>Shipped</Button>
-      <Button danger icon={<CloseCircleOutlined />}
+      <Button danger={tab !== 'cancel'} type={tab === 'cancel' ? 'primary' : 'default'}
+        icon={<CloseCircleOutlined />}
         disabled={isCancelled}
         onClick={() => setTab('cancel')}>Cancella</Button>
+      <Button type={tab === 'messages' ? 'primary' : 'default'}
+        onClick={() => setTab('messages')}>💬 Messaggi</Button>
     </Space>
   )
 
   return (
-    <Modal open={!!order} onCancel={() => { setPresent({}); setTab('info'); onClose() }}
+    <Modal open={!!order} onCancel={() => { setPresent({}); setTab('info'); setFocusedItem(0); setMessages([]); setMsgText(''); onClose() }}
       title={<Space>
         <span>Ordine {order.id}</span>
         <Tag color={STATUS_COLOR[order.status] ?? 'default'}>{order.status}</Tag>
@@ -297,20 +336,32 @@ function OrderModal({ order, onClose, onRefresh }: {
               const isPresent = currentPresent[i] !== false
               const thumb = item.release?.thumbnail
               return (
-                <div key={i} style={{
+                <div id={`order-item-${i}`} key={i} style={{
                   display: 'flex', alignItems: 'flex-start', gap: 14, marginBottom: 10,
                   padding: '10px 14px', borderRadius: 8,
                   background: isPresent ? '#f6ffed' : '#fff2f0',
                   border: `1px solid ${isPresent ? '#b7eb8f' : '#ffccc7'}`,
                 }}>
-                  {/* Foto grande con lightbox */}
-                  <div style={{ flexShrink: 0, width: 110, height: 110 }}>
+                  {/* Foto con frecce overlay prev/next */}
+                  <div style={{ flexShrink: 0, position: 'relative', width: 130, height: 110 }}>
+                    {/* Freccia precedente */}
+                    {i > 0 && (
+                      <button onClick={() => setFocusedItem(i - 1)}
+                        style={{
+                          position: 'absolute', left: -16, top: '50%', transform: 'translateY(-50%)',
+                          zIndex: 2, background: 'rgba(0,0,0,0.55)', border: 'none', borderRadius: '50%',
+                          width: 26, height: 26, cursor: 'pointer', color: '#fff',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12,
+                        }}>
+                        <LeftOutlined />
+                      </button>
+                    )}
                     {thumb ? (
                       <Image
                         src={thumb}
                         width={110}
                         height={110}
-                        style={{ objectFit: 'cover', borderRadius: 6, cursor: 'zoom-in' }}
+                        style={{ objectFit: 'cover', borderRadius: 6, cursor: 'zoom-in', display: 'block' }}
                         preview={{ src: thumb }}
                         fallback="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='110' height='110'%3E%3Crect width='110' height='110' fill='%23f0f0f0'/%3E%3Ctext x='55' y='62' text-anchor='middle' font-size='32'%3E🎵%3C/text%3E%3C/svg%3E"
                       />
@@ -319,6 +370,18 @@ function OrderModal({ order, onClose, onRefresh }: {
                         display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 36 }}>
                         🎵
                       </div>
+                    )}
+                    {/* Freccia successiva */}
+                    {i < (order.items?.length ?? 1) - 1 && (
+                      <button onClick={() => setFocusedItem(i + 1)}
+                        style={{
+                          position: 'absolute', right: -4, top: '50%', transform: 'translateY(-50%)',
+                          zIndex: 2, background: 'rgba(0,0,0,0.55)', border: 'none', borderRadius: '50%',
+                          width: 26, height: 26, cursor: 'pointer', color: '#fff',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12,
+                        }}>
+                        <RightOutlined />
+                      </button>
                     )}
                   </div>
 
@@ -426,6 +489,74 @@ function OrderModal({ order, onClose, onRefresh }: {
           <Button danger htmlType="submit" icon={<CloseCircleOutlined />}
             loading={cancelMut.isPending}>Conferma Cancellazione</Button>
         </Form>
+      )}
+
+      {/* ── Tab MESSAGGI ── */}
+      {tab === 'messages' && (
+        <div style={{ display: 'flex', flexDirection: 'column', height: 420 }}>
+          {/* Area chat */}
+          <div style={{ flex: 1, overflowY: 'auto', background: '#f8f9fa',
+            borderRadius: 8, padding: 12, marginBottom: 12, border: '1px solid #e8e8e8' }}>
+            {msgLoading && <div style={{ textAlign: 'center', padding: 20 }}><Spin /></div>}
+            {!msgLoading && messages.length === 0 && (
+              <Text type="secondary">Nessun messaggio per questo ordine.</Text>
+            )}
+            {messages.map((m, i) => {
+              const isSeller = m.from?.username !== order['buyer.username']
+              return (
+                <div key={i} style={{
+                  display: 'flex', flexDirection: 'column',
+                  alignItems: isSeller ? 'flex-end' : 'flex-start',
+                  marginBottom: 12,
+                }}>
+                  <div style={{ fontSize: 11, color: '#888', marginBottom: 3 }}>
+                    {isSeller ? '(Tu) ' : ''}<b>{m.from?.username}</b> · {dayjs(m.timestamp).format('DD/MM HH:mm')}
+                  </div>
+                  <div style={{
+                    maxWidth: '80%', padding: '8px 12px', borderRadius: 12,
+                    background: isSeller ? '#1677ff' : '#fff',
+                    color: isSeller ? '#fff' : '#333',
+                    boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
+                    whiteSpace: 'pre-wrap', fontSize: 13,
+                  }}>
+                    {m.message}
+                  </div>
+                </div>
+              )
+            })}
+            <div ref={chatBottomRef} />
+          </div>
+
+          {/* Input nuovo messaggio */}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+            <Input.TextArea
+              value={msgText}
+              onChange={e => setMsgText(e.target.value)}
+              placeholder="Scrivi un messaggio..."
+              rows={2}
+              style={{ flex: 1 }}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
+            />
+            <Space direction="vertical">
+              <Button type="primary" icon={<SendOutlined />}
+                loading={msgSending} onClick={sendMessage}
+                disabled={!msgText.trim()}>
+                Invia
+              </Button>
+              <Button size="small" onClick={() => {
+                setMsgLoading(true)
+                client.get(`/api/v1/integrations/discogs/orders/${order.id}/messages`)
+                  .then(r => setMessages(r.data.messages ?? []))
+                  .finally(() => setMsgLoading(false))
+              }}>
+                <ReloadOutlined />
+              </Button>
+            </Space>
+          </div>
+          <Text type="secondary" style={{ fontSize: 11, marginTop: 4 }}>
+            Invio con Invio · nuova riga con Shift+Invio
+          </Text>
+        </div>
       )}
     </Modal>
   )

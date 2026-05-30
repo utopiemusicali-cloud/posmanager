@@ -74,6 +74,32 @@ async def get_messages(order_id: str):
         raise HTTPException(502, f"Errore Discogs API: {e}")
 
 
+class SendMessagePayload(BaseModel):
+    message: str
+
+
+@router.post("/discogs/orders/{order_id}/messages")
+async def send_message(order_id: str, body: SendMessagePayload):
+    """Invia un messaggio all'acquirente senza cambiare lo status dell'ordine."""
+    token = _require_token()
+    if not body.message.strip():
+        raise HTTPException(400, "Messaggio vuoto")
+    headers = {
+        "Authorization": f"Discogs token={token}",
+        "Content-Type": "application/json",
+        "User-Agent": "posmanager/1.0",
+    }
+    import httpx
+    async with httpx.AsyncClient(headers=headers, timeout=20) as client:
+        resp = await client.post(
+            f"https://api.discogs.com/marketplace/orders/{order_id}/messages",
+            json={"message": body.message},
+        )
+    if resp.status_code == 201:
+        return {"ok": True}
+    raise HTTPException(502, f"Discogs ha risposto con {resp.status_code}")
+
+
 # ── Segna come spedito ─────────────────────────────────────────────────────────
 
 class ShipPayload(BaseModel):
