@@ -5,6 +5,7 @@ import {
   Row, Col, Card, Tag, Space, Divider, message, Popconfirm,
   Typography, Tooltip,
 } from 'antd'
+import type { InputRef } from 'antd'
 import type { ColumnType } from 'antd/es/table'
 import {
   BarcodeOutlined, PlusOutlined, DeleteOutlined,
@@ -153,7 +154,7 @@ export default function ReceiptPage() {
   // Ricerca inventario
   const [invSearch, setInvSearch] = useState('')
   const [barcode, setBarcode] = useState('')
-  const barcodeRef = useRef<HTMLInputElement>(null)
+  const barcodeRef = useRef<InputRef>(null)
 
   const { data: invItems = [], isLoading: invLoading } = useQuery({
     queryKey: ['inv-pos', invSearch],
@@ -281,7 +282,7 @@ export default function ReceiptPage() {
           <Card size="small" style={{ flexShrink: 0 }}>
             <Space.Compact style={{ width: '100%' }}>
               <Input
-                ref={barcodeRef as React.RefObject<HTMLInputElement>}
+                ref={barcodeRef}
                 prefix={<BarcodeOutlined />}
                 placeholder="Scansiona barcode o inserisci Listing ID / External ID..."
                 value={barcode}
