@@ -257,10 +257,16 @@ async def get_release_sales(release_id: str, db: AsyncSession = Depends(get_db))
     return {"scraped": True, **_sales_to_dict(row)}
 
 
+def _can_scrape() -> None:
+    if not settings.DISCOGS_USERNAME and not os.path.exists(settings.DISCOGS_STATE_PATH):
+        raise HTTPException(400,
+            "Nessuna sessione Discogs: configura DISCOGS_USERNAME/PASSWORD nel .env "
+            "oppure carica i cookie con scripts/discogs_login_local.py")
+
+
 @router.post("/releases/{release_id}/scrape-sales")
 async def scrape_release_sales(release_id: str, db: AsyncSession = Depends(get_db)):
-    if not settings.DISCOGS_USERNAME:
-        raise HTTPException(400, "DISCOGS_USERNAME/PASSWORD non configurati nel .env")
+    _can_scrape()
     try:
         async with DiscogsScraper() as scraper:
             data = await scraper.scrape_release(release_id)
@@ -278,8 +284,7 @@ class BatchScrapeBody(BaseModel):
 async def scrape_sales_batch(body: BatchScrapeBody, db: AsyncSession = Depends(get_db)):
     """Scrapa un chunk di release in una sola sessione browser. Il frontend
     chiama in loop con chunk piccoli (es. 5-10) mostrando il progresso."""
-    if not settings.DISCOGS_USERNAME:
-        raise HTTPException(400, "DISCOGS_USERNAME/PASSWORD non configurati nel .env")
+    _can_scrape()
     ids = [r for r in body.release_ids if r]
     if not ids:
         return {"processed": 0}

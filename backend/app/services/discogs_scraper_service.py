@@ -251,9 +251,17 @@ class DiscogsScraper:
 
     async def _ensure_login(self) -> None:
         await self._page.goto(f"{_BASE}/", wait_until="domcontentloaded", timeout=30000)
-        if not await self._is_logged_in():
-            if not await self.login():
-                raise RuntimeError("Impossibile autenticarsi su Discogs (captcha/2FA?)")
+        if await self._is_logged_in():
+            return  # cookie validi
+        # Cookie assenti/scaduti → tenta login automatico (se credenziali presenti)
+        if not (settings.DISCOGS_USERNAME and settings.DISCOGS_PASSWORD):
+            raise RuntimeError(
+                "Sessione Discogs scaduta e nessuna credenziale. "
+                "Rigenera i cookie con scripts/discogs_login_local.py e ricaricali sul server.")
+        if not await self.login():
+            raise RuntimeError(
+                "Login automatico fallito (probabile captcha). "
+                "Usa scripts/discogs_login_local.py per fare login manuale e caricare i cookie.")
 
     async def scrape_release(self, release_id: str, do_login_check: bool = True) -> dict:
         """Scarica storico vendite + mercato per una release."""
