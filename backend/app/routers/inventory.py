@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -11,7 +12,10 @@ from app.auth.dependencies import get_current_user
 from app.config import settings
 from app.database import get_db
 from app.models.inventory_item import InventoryItem
-from app.services.discogs_enrich_service import enrich_batch
+from app.models.release_meta import ReleaseMeta
+from app.models.release_sales import ReleaseSales
+from app.services.discogs_enrich_service import fetch_release_meta
+from app.services.discogs_scraper_service import DiscogsScraper
 from app.services.discogs_lookup_service import lookup_release
 from app.services.discogs_sync_service import sync_inventory
 from app.services.inventory_service import InventoryService
@@ -23,6 +27,21 @@ router = APIRouter(
 )
 
 _svc = InventoryService()
+
+
+async def _sync_meta(db: AsyncSession) -> None:
+    """Sincronizza il dict metadati in memoria con la tabella release_meta.
+    Confronta COUNT(*) (veloce) per rilevare modifiche fatte da altri worker.
+    """
+    from app.services import inventory_service as _is
+    count = (await db.execute(select(func.count()).select_from(ReleaseMeta))).scalar_one()
+    if count == len(_is._META):
+        return
+    rows = (await db.execute(
+        select(ReleaseMeta.release_id, ReleaseMeta.genre, ReleaseMeta.style, ReleaseMeta.year)
+    )).all()
+    meta = {r[0]: {"genre": r[1] or "", "style": r[2] or "", "year": r[3] or ""} for r in rows}
+    _svc.set_meta(meta)
 
 _MEDIA_CONDITIONS = [
     "Mint (M)", "Near Mint (NM or M-)", "Very Good Plus (VG+)",
@@ -73,7 +92,9 @@ async def get_inventory(
     sort: str = "listed_desc",
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=1, le=1000),
+    db: AsyncSession = Depends(get_db),
 ):
+    await _sync_meta(db)
     filters = {
         "status": status, "q": q, "media_type": media_type,
         "format_desc": format_desc, "media_condition": media_condition,
@@ -89,31 +110,43 @@ async def get_inventory(
 # ── Facets (conteggi filtri) ────────────────────────────────────────────────────
 
 @router.get("/facets")
-async def get_facets(status: str | None = None, q: str | None = None):
+async def get_facets(status: str | None = None, q: str | None = None,
+                     db: AsyncSession = Depends(get_db)):
+    await _sync_meta(db)
     return await _svc.facets(status=status, q=q)
 
 
-# ── Arricchimento Genre/Style/Year ─────────────────────────────────────────────
+# ── Arricchimento Genre/Style/Year (tabella release_meta) ──────────────────────
 
 @router.get("/enrich-status")
-async def enrich_status():
+async def enrich_status(db: AsyncSession = Depends(get_db)):
+    await _sync_meta(db)
     return await _svc.enrich_progress()
 
 
 @router.post("/enrich-batch")
-async def enrich_batch_ep(size: int = Query(40, ge=1, le=55)):
+async def enrich_batch_ep(size: int = Query(40, ge=1, le=55),
+                          db: AsyncSession = Depends(get_db)):
     if not settings.DISCOGS_TOKEN:
         raise HTTPException(400, "DISCOGS_TOKEN non configurato")
+    await _sync_meta(db)
     ids = await _svc.unenriched_release_ids(limit=size)
     if not ids:
         return {"processed": 0, "remaining": 0, "done": True}
+
     try:
-        await enrich_batch(settings.DISCOGS_TOKEN, ids, settings.INVENTORY_CSV_DIR)
+        metas = await fetch_release_meta(settings.DISCOGS_TOKEN, ids)
     except Exception as e:
         raise HTTPException(502, f"Errore Discogs API: {e}")
-    await _svc.reload()
+
+    # Upsert nella tabella release_meta
+    for m in metas:
+        await db.merge(ReleaseMeta(**m))
+    await db.commit()
+
+    await _sync_meta(db)
     prog = await _svc.enrich_progress()
-    return {"processed": len(ids), "remaining": prog["remaining"], "done": prog["remaining"] == 0}
+    return {"processed": len(metas), "remaining": prog["remaining"], "done": prog["remaining"] == 0}
 
 
 # ── Sync da Discogs ────────────────────────────────────────────────────────────
@@ -164,6 +197,106 @@ async def next_listing_id(mode: str = "nod_unoff", db: AsyncSession = Depends(ge
         except Exception:
             pass
     return {"next_id": str(fallback)}
+
+
+# ── Vendite & Mercato (scraping Discogs) ───────────────────────────────────────
+
+def _sales_to_dict(s: ReleaseSales) -> dict:
+    return {
+        "release_id": s.release_id,
+        "sales_count": s.sales_count,
+        "min_price": s.min_price, "max_price": s.max_price,
+        "median_price": s.median_price, "avg_price": s.avg_price,
+        "last_sold_price": s.last_sold_price, "last_sold_date": s.last_sold_date,
+        "have": s.have, "want": s.want, "avg_rating": s.avg_rating,
+        "ratings_count": s.ratings_count, "items_for_sale": s.items_for_sale,
+        "sales_history": s.sales_history or [],
+        "market_listings": s.market_listings or [],
+        "sales_scraped_at": s.sales_scraped_at.isoformat() if s.sales_scraped_at else None,
+        "market_scraped_at": s.market_scraped_at.isoformat() if s.market_scraped_at else None,
+    }
+
+
+async def _save_scrape(db: AsyncSession, release_id: str, data: dict) -> ReleaseSales:
+    now = datetime.now()
+    row = await db.get(ReleaseSales, str(release_id)) or ReleaseSales(release_id=str(release_id))
+    row.sales_count = data.get("sales_count", 0)
+    row.min_price = data.get("min_price")
+    row.max_price = data.get("max_price")
+    row.median_price = data.get("median_price")
+    row.avg_price = data.get("avg_price")
+    row.last_sold_price = data.get("last_sold_price")
+    row.last_sold_date = data.get("last_sold_date", "") or ""
+    row.have = data.get("have")
+    row.want = data.get("want")
+    row.avg_rating = data.get("avg_rating")
+    row.ratings_count = data.get("ratings_count")
+    row.items_for_sale = data.get("items_for_sale")
+    row.sales_history = data.get("sales_history", [])
+    row.market_listings = data.get("market_listings", [])
+    row.sales_scraped_at = now
+    row.market_scraped_at = now
+    await db.merge(row)
+    await db.commit()
+    return row
+
+
+@router.get("/discogs/session-status")
+async def discogs_session_status():
+    return {
+        "credentials_set": bool(settings.DISCOGS_USERNAME and settings.DISCOGS_PASSWORD),
+        "session_saved": os.path.exists(settings.DISCOGS_STATE_PATH),
+    }
+
+
+@router.get("/releases/{release_id}/sales")
+async def get_release_sales(release_id: str, db: AsyncSession = Depends(get_db)):
+    row = await db.get(ReleaseSales, str(release_id))
+    if not row:
+        return {"release_id": release_id, "scraped": False}
+    return {"scraped": True, **_sales_to_dict(row)}
+
+
+@router.post("/releases/{release_id}/scrape-sales")
+async def scrape_release_sales(release_id: str, db: AsyncSession = Depends(get_db)):
+    if not settings.DISCOGS_USERNAME:
+        raise HTTPException(400, "DISCOGS_USERNAME/PASSWORD non configurati nel .env")
+    try:
+        async with DiscogsScraper() as scraper:
+            data = await scraper.scrape_release(release_id)
+    except Exception as e:
+        raise HTTPException(502, f"Errore scraping Discogs: {e}")
+    row = await _save_scrape(db, release_id, data)
+    return {"scraped": True, **_sales_to_dict(row)}
+
+
+class BatchScrapeBody(BaseModel):
+    release_ids: list[str]
+
+
+@router.post("/scrape-sales-batch")
+async def scrape_sales_batch(body: BatchScrapeBody, db: AsyncSession = Depends(get_db)):
+    """Scrapa un chunk di release in una sola sessione browser. Il frontend
+    chiama in loop con chunk piccoli (es. 5-10) mostrando il progresso."""
+    if not settings.DISCOGS_USERNAME:
+        raise HTTPException(400, "DISCOGS_USERNAME/PASSWORD non configurati nel .env")
+    ids = [r for r in body.release_ids if r]
+    if not ids:
+        return {"processed": 0}
+    processed = 0
+    try:
+        async with DiscogsScraper() as scraper:
+            await scraper._ensure_login()
+            for rid in ids:
+                try:
+                    data = await scraper.scrape_release(rid, do_login_check=False)
+                    await _save_scrape(db, rid, data)
+                    processed += 1
+                except Exception:
+                    pass
+    except Exception as e:
+        raise HTTPException(502, f"Errore scraping Discogs: {e}")
+    return {"processed": processed}
 
 
 # ── Dropdown options ───────────────────────────────────────────────────────────

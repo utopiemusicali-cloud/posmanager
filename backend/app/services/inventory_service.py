@@ -11,9 +11,12 @@ from typing import Any
 import pandas as pd
 
 from app.config import settings
-from app.services.discogs_enrich_service import load_cache
 
 _CSV_DIR = settings.INVENTORY_CSV_DIR
+
+# Dict metadati condiviso: { release_id: {"genre","style","year","country"} }
+# Popolato dal router leggendo la tabella release_meta del DB.
+_META: dict[str, dict] = {}
 
 _REQUIRED = ["source", "listing_id", "artist", "title", "label", "catno",
              "format", "price", "listed", "media_condition", "sleeve_condition",
@@ -78,12 +81,11 @@ def _load_sync() -> pd.DataFrame:
     # Tipo supporto
     df["media_type"] = df["format"].apply(_media_type)
 
-    # Merge metadati Genre/Style/Year dalla cache
-    meta = load_cache(_CSV_DIR)
-    if meta:
-        df["genre"] = df["release_id"].map(lambda r: meta.get(str(r), {}).get("genre", ""))
-        df["style"] = df["release_id"].map(lambda r: meta.get(str(r), {}).get("style", ""))
-        df["year"] = df["release_id"].map(lambda r: meta.get(str(r), {}).get("year", ""))
+    # Merge metadati Genre/Style/Year dal dict in memoria (caricato da DB)
+    if _META:
+        df["genre"] = df["release_id"].map(lambda r: _META.get(str(r), {}).get("genre", ""))
+        df["style"] = df["release_id"].map(lambda r: _META.get(str(r), {}).get("style", ""))
+        df["year"] = df["release_id"].map(lambda r: _META.get(str(r), {}).get("year", ""))
     else:
         df["genre"] = ""
         df["style"] = ""
@@ -219,14 +221,18 @@ class InventoryService:
         df = await self._ensure_loaded()
         return [r for r in df["release_id"].unique().tolist() if r]
 
+    def set_meta(self, meta: dict[str, dict]) -> None:
+        """Imposta il dict metadati (da DB) e invalida la cache del DataFrame."""
+        global _META
+        _META = meta
+        self._df = None  # forza ricostruzione al prossimo accesso
+
     async def unenriched_release_ids(self, limit: int) -> list[str]:
         ids = await self.unique_release_ids()
-        cache = load_cache(_CSV_DIR)
-        out = [r for r in ids if str(r) not in cache]
+        out = [r for r in ids if str(r) not in _META]
         return out[:limit]
 
     async def enrich_progress(self) -> dict:
         ids = await self.unique_release_ids()
-        cache = load_cache(_CSV_DIR)
-        enriched = sum(1 for r in ids if str(r) in cache)
+        enriched = sum(1 for r in ids if str(r) in _META)
         return {"total": len(ids), "enriched": enriched, "remaining": len(ids) - enriched}

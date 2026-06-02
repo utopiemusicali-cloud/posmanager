@@ -25,5 +25,10 @@ class Settings(BaseSettings):
     DISCOGS_TOKEN: str = ""
     INVENTORY_CSV_DIR: str = "/inventory"
 
+    # Discogs login per scraping vendite/mercato (Playwright)
+    DISCOGS_USERNAME: str = ""
+    DISCOGS_PASSWORD: str = ""
+    DISCOGS_STATE_PATH: str = "/inventory/discogs_state.json"
+
 
 settings = Settings()

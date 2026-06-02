@@ -55,6 +55,9 @@ services:
       FIRST_ADMIN_PASSWORD: ${FIRST_ADMIN_PASSWORD}
       INVENTORY_CSV_DIR: /inventory
       DISCOGS_TOKEN: ${DISCOGS_TOKEN}
+      DISCOGS_USERNAME: ${DISCOGS_USERNAME}
+      DISCOGS_PASSWORD: ${DISCOGS_PASSWORD}
+      DISCOGS_STATE_PATH: /inventory/discogs_state.json
     volumes:
       - inventory_data:/inventory
     expose:
@@ -62,8 +65,9 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
-    mem_limit: 1g
+    mem_limit: 2g
     mem_reservation: 512m
+    shm_size: 1g
 
   nginx:
     image: nginx:alpine

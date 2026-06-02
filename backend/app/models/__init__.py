@@ -11,6 +11,8 @@ from app.models.digital_transaction import DigitalTransaction
 from app.models.deletion_log import DeletionLog
 from app.models.cost_center import CostCenter
 from app.models.inventory_item import InventoryItem
+from app.models.release_meta import ReleaseMeta
+from app.models.release_sales import ReleaseSales
 
 __all__ = [
     "Base",
@@ -26,4 +28,6 @@ __all__ = [
     "DeletionLog",
     "CostCenter",
     "InventoryItem",
+    "ReleaseMeta",
+    "ReleaseSales",
 ]

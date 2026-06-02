@@ -11,6 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml .
 RUN pip install --no-cache-dir -e .
 
+# Playwright + Firefox headless (per scraping Discogs sales/market)
+RUN playwright install --with-deps firefox
+
 # Copy application
 COPY . .
 
