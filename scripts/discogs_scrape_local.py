@@ -36,6 +36,11 @@ _CF_MARKERS = ("just a moment", "esecuzione della verifica", "performing securit
                "verifying you are human", "challenge-platform", "cf-challenge",
                "verifica di sicurezza")
 
+# Whitelist condizioni Discogs (pulisce il testo dal tooltip descrittivo)
+_COND_RE = re.compile(
+    r"(Mint \(M\)|Near Mint \(NM or M-\)|Very Good Plus \(VG\+\)|Very Good \(VG\)|"
+    r"Good Plus \(G\+\)|Good \(G\)|Fair \(F\)|Poor \(P\)|Generic|No Cover|Not Graded)")
+
 
 # ── Parsing ─────────────────────────────────────────────────────────────────────
 def _num(text):
@@ -110,10 +115,12 @@ def parse_market(html):
             media = sleeve = ""
             mc = desc.select_one(".item_condition")
             if mc:
-                m = re.search(r"Media Condition:\s*(.+?)(?:Sleeve|$)", mc.get_text(" ", strip=True))
-                if m: media = m.group(1).strip()
+                m = _COND_RE.search(mc.get_text(" ", strip=True))
+                if m: media = m.group(1)
             sl = desc.select_one(".item_sleeve_condition")
-            if sl: sleeve = sl.get_text(strip=True)
+            if sl:
+                m = _COND_RE.search(sl.get_text(" ", strip=True))
+                sleeve = m.group(1) if m else sl.get_text(strip=True)
             price = ship = total = None
             cur = "EUR"
             ps = row.select_one(".item_price .price, .price")
@@ -176,7 +183,7 @@ def scrape_release(driver, rid):
     html = _open_cf(driver, f"{BASE}/sell/history/{rid}")
     hist = parse_history(html)
     time.sleep(SLEEP)
-    html = _open_cf(driver, f"{BASE}/sell/release/{rid}?sort=price&sort_order=asc")
+    html = _open_cf(driver, f"{BASE}/sell/release/{rid}?sort=listed&sort_order=desc")
     market = parse_market(html)
     time.sleep(SLEEP)
     return {**hist, **market}
