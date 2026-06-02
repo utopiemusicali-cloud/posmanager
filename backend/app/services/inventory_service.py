@@ -33,9 +33,11 @@ def _load_sync() -> pd.DataFrame:
     if "status" in df.columns:
         df["status"] = df["status"].fillna("").str.strip()
 
-    # Ordina dal più recente
+    # Ordina dal più recente.
+    # Il CSV Discogs usa formato ISO "YYYY-MM-DD HH:MM:SS": NIENTE dayfirst/mixed
+    # (altrimenti pandas sbaglia a parsare e mette NaT, spingendo in fondo i recenti)
     if "listed" in df.columns:
-        df["_dt"] = pd.to_datetime(df["listed"], dayfirst=True, errors="coerce", format="mixed")
+        df["_dt"] = pd.to_datetime(df["listed"], errors="coerce")
         df = df.sort_values("_dt", ascending=False, na_position="last").drop(columns=["_dt"])
 
     for col in _REQUIRED:
