@@ -11,6 +11,7 @@ from app.auth.dependencies import get_current_user
 from app.config import settings
 from app.database import get_db
 from app.models.inventory_item import InventoryItem
+from app.services.discogs_enrich_service import enrich_batch
 from app.services.discogs_lookup_service import lookup_release
 from app.services.discogs_sync_service import sync_inventory
 from app.services.inventory_service import InventoryService
@@ -59,42 +60,60 @@ def _item_to_dict(item: InventoryItem) -> dict:
 async def get_inventory(
     status: str | None = None,
     q: str | None = None,
+    media_type: str | None = None,
+    format_desc: str | None = None,
+    media_condition: str | None = None,
+    sleeve_condition: str | None = None,
+    location: str | None = None,
+    genre: str | None = None,
+    style: str | None = None,
+    year: str | None = None,
+    price_min: float | None = None,
+    price_max: float | None = None,
+    sort: str = "listed_desc",
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=1, le=1000),
-    db: AsyncSession = Depends(get_db),
 ):
-    # Articoli aggiunti manualmente via web app (di solito pochi)
-    stmt = select(InventoryItem)
-    if status:
-        stmt = stmt.where(InventoryItem.status == status)
-    db_items = (await db.execute(stmt)).scalars().all()
-    db_dicts = [_item_to_dict(i) for i in db_items]
-    if q:
-        qlow = q.lower()
-        db_dicts = [d for d in db_dicts if any(qlow in str(v).lower() for v in d.values())]
-
-    # CSV Discogs — ricerca vettorizzata + paginazione lato pandas
-    db_count = len(db_dicts)
-    start = (page - 1) * page_size
-    # Gli item DB vanno in cima: calcola offset/limit per il CSV
-    csv_offset = max(0, start - db_count)
-    csv_limit = page_size if start >= db_count else page_size - (db_count - start)
-    csv_total, csv_items = await _svc.query(
-        status_filter=status, search=q,
-        offset=csv_offset, limit=max(0, csv_limit),
-    )
-
-    # Componi la pagina: prima i DB items (se rientrano), poi i CSV
-    db_slice = db_dicts[start: start + page_size]
-    items = db_slice + csv_items
-    items = items[:page_size]
-
-    return {
-        "total": db_count + csv_total,
-        "items": items,
-        "page": page,
-        "page_size": page_size,
+    filters = {
+        "status": status, "q": q, "media_type": media_type,
+        "format_desc": format_desc, "media_condition": media_condition,
+        "sleeve_condition": sleeve_condition, "location": location,
+        "genre": genre, "style": style, "year": year,
+        "price_min": price_min, "price_max": price_max,
     }
+    start = (page - 1) * page_size
+    total, items = await _svc.query(filters, sort=sort, offset=start, limit=page_size)
+    return {"total": total, "items": items, "page": page, "page_size": page_size}
+
+
+# ── Facets (conteggi filtri) ────────────────────────────────────────────────────
+
+@router.get("/facets")
+async def get_facets(status: str | None = None, q: str | None = None):
+    return await _svc.facets(status=status, q=q)
+
+
+# ── Arricchimento Genre/Style/Year ─────────────────────────────────────────────
+
+@router.get("/enrich-status")
+async def enrich_status():
+    return await _svc.enrich_progress()
+
+
+@router.post("/enrich-batch")
+async def enrich_batch_ep(size: int = Query(40, ge=1, le=55)):
+    if not settings.DISCOGS_TOKEN:
+        raise HTTPException(400, "DISCOGS_TOKEN non configurato")
+    ids = await _svc.unenriched_release_ids(limit=size)
+    if not ids:
+        return {"processed": 0, "remaining": 0, "done": True}
+    try:
+        await enrich_batch(settings.DISCOGS_TOKEN, ids, settings.INVENTORY_CSV_DIR)
+    except Exception as e:
+        raise HTTPException(502, f"Errore Discogs API: {e}")
+    await _svc.reload()
+    prog = await _svc.enrich_progress()
+    return {"processed": len(ids), "remaining": prog["remaining"], "done": prog["remaining"] == 0}
 
 
 # ── Sync da Discogs ────────────────────────────────────────────────────────────
