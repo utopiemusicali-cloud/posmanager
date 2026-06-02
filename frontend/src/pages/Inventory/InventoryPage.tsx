@@ -6,27 +6,7 @@ import { PlusOutlined, SearchOutlined, SyncOutlined } from '@ant-design/icons'
 import client from '@/api/client'
 import AddInventoryModal from './AddInventoryModal'
 
-// Mappa colonne CSV → label italiano
-const LABELS: Record<string, string> = {
-  source: 'Fonte', listing_id: 'ID', artist: 'Artista', title: 'Titolo',
-  label: 'Label', catno: 'Cat#', format: 'Formato', price: 'Prezzo',
-  listed: 'Data', media_condition: 'Media', sleeve_condition: 'Sleeve',
-  location: 'Location', external_id: 'Ext.ID', comments: 'Note',
-  quantity: 'Qtà', status: 'Status', release_id: 'Release ID',
-  weight: 'Peso', ships_from: 'Spedisce da', currency: 'Valuta',
-  allow_offers: 'Offerte', seller: 'Venditore', country: 'Paese',
-  year: 'Anno', genres: 'Generi', styles: 'Stili',
-}
-
-// Colonne da nascondere (ridondanti o tecniche)
-const HIDDEN = new Set(['status', '_id'])
-
-// Colonne con larghezza fissa
-const WIDTHS: Record<string, number> = {
-  source: 80, listing_id: 100, catno: 90, format: 110, price: 85,
-  listed: 130, quantity: 50, weight: 60, release_id: 100,
-  allow_offers: 70, currency: 65, year: 60,
-}
+type Row = Record<string, string>
 
 function formatPrice(v: string): string {
   const n = parseFloat(v)
@@ -34,31 +14,71 @@ function formatPrice(v: string): string {
   return `€ ${n % 1 === 0 ? n.toFixed(0) : n.toFixed(2)}`
 }
 
-function buildColumns(sample: Record<string, string>): ColumnType<Record<string, string>>[] {
-  // Ordine preferito delle colonne principali
-  const preferred = ['source', 'listing_id', 'artist', 'title', 'label', 'catno',
-    'format', 'price', 'listed', 'media_condition', 'sleeve_condition', 'location',
-    'comments', 'weight', 'external_id']
-
-  const allKeys = Object.keys(sample)
-  const ordered = [
-    ...preferred.filter(k => allKeys.includes(k)),
-    ...allKeys.filter(k => !preferred.includes(k) && !HIDDEN.has(k)),
-  ]
-
-  return ordered.map(key => {
-    const col: ColumnType<Record<string, string>> = {
-      title: LABELS[key] ?? key,
-      dataIndex: key,
-      key,
-      ellipsis: true,
-    }
-    if (WIDTHS[key]) col.width = WIDTHS[key]
-    if (key === 'source') col.render = (v: string) => <Tag>{v}</Tag>
-    if (key === 'price') col.render = (v: string) => formatPrice(v)
-    return col
-  })
+function formatDate(v: string): string {
+  if (!v) return '—'
+  // ISO "2026-05-20 10:30:00" → "20/05/2026"
+  const m = v.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (m) return `${m[3]}/${m[2]}/${m[1]}`
+  return v.split(' ')[0]
 }
+
+// Colonne raggruppate → tabella più corta e leggibile
+const groupedColumns: ColumnType<Row>[] = [
+  {
+    title: 'Fonte',
+    dataIndex: 'source',
+    width: 80,
+    render: (v: string) => <Tag>{v}</Tag>,
+  },
+  {
+    title: 'Articolo',
+    key: 'articolo',
+    render: (_: unknown, r: Row) => (
+      <div style={{ lineHeight: 1.35 }}>
+        <div style={{ fontWeight: 600 }}>
+          {r.artist || '—'}{r.title ? ` — ${r.title}` : ''}
+        </div>
+        <div style={{ fontSize: 12, color: '#888' }}>
+          {[r.label, r.catno, r.format].filter(Boolean).join(' · ') || '—'}
+        </div>
+      </div>
+    ),
+  },
+  {
+    title: 'Prezzo / Condizioni',
+    key: 'prezzo',
+    width: 200,
+    render: (_: unknown, r: Row) => (
+      <div style={{ lineHeight: 1.35 }}>
+        <div>
+          <b style={{ color: '#27ae60' }}>{formatPrice(r.price)}</b>
+          <span style={{ color: '#aaa', marginLeft: 8, fontSize: 12 }}>{formatDate(r.listed)}</span>
+        </div>
+        <div style={{ fontSize: 12, color: '#888' }}>
+          M: {r.media_condition || '—'} · S: {r.sleeve_condition || '—'}
+        </div>
+      </div>
+    ),
+  },
+  {
+    title: 'Location / Note',
+    key: 'location',
+    width: 200,
+    render: (_: unknown, r: Row) => (
+      <div style={{ lineHeight: 1.35 }}>
+        {r.location && <div style={{ fontWeight: 600, color: '#1677ff' }}>📍 {r.location}</div>}
+        {r.comments && <div style={{ fontSize: 12, color: '#888' }}>{r.comments}</div>}
+        {!r.location && !r.comments && <span style={{ color: '#ccc' }}>—</span>}
+      </div>
+    ),
+  },
+  {
+    title: 'ID',
+    dataIndex: 'listing_id',
+    width: 100,
+    render: (v: string) => <span style={{ fontSize: 11, color: '#999' }}>{v}</span>,
+  },
+]
 
 async function getInventory(status?: string, q?: string, page = 1) {
   const res = await client.get('/api/v1/inventory', {
@@ -81,8 +101,7 @@ function InventoryTable({ status }: { status: string }) {
     queryFn: () => getInventory(status, search, page),
   })
 
-  const items: Record<string, string>[] = data?.items ?? []
-  const columns = items.length > 0 ? buildColumns(items[0]) : []
+  const items: Row[] = data?.items ?? []
 
   return (
     <div>
@@ -99,11 +118,10 @@ function InventoryTable({ status }: { status: string }) {
       </div>
       <Table
         dataSource={items}
-        columns={columns}
+        columns={groupedColumns}
         rowKey={(r) => `${r.source}-${r.listing_id}`}
         loading={isLoading}
         size="small"
-        scroll={{ x: 'max-content' }}
         pagination={{ current: page, total: data?.total ?? 0, pageSize: 100, onChange: setPage }}
       />
     </div>
