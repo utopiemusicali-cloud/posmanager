@@ -298,15 +298,14 @@ class DiscogsScraper:
         )
         market = _parse_market(html_m)
 
-        # DEBUG temporaneo: salva l'HTML per ispezione
-        if os.getenv("SCRAPE_DEBUG"):
-            try:
-                d = os.path.dirname(settings.DISCOGS_STATE_PATH)
-                with open(os.path.join(d, "_dbg_history.html"), "w", encoding="utf-8") as f:
-                    f.write(html_h)
-                with open(os.path.join(d, "_dbg_market.html"), "w", encoding="utf-8") as f:
-                    f.write(html_m)
-            except Exception:
-                pass
+        # DEBUG temporaneo: salva sempre l'HTML per ispezione
+        try:
+            d = os.path.dirname(settings.DISCOGS_STATE_PATH)
+            with open(os.path.join(d, "_dbg_history.html"), "w", encoding="utf-8") as f:
+                f.write(html_h)
+            with open(os.path.join(d, "_dbg_market.html"), "w", encoding="utf-8") as f:
+                f.write(html_m)
+        except Exception:
+            pass
 
         return {**hist, **market}
