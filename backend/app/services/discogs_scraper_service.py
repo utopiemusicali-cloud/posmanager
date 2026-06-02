@@ -285,17 +285,28 @@ class DiscogsScraper:
             await self._ensure_login()
 
         # Storico vendite
-        html = await self._safe_goto(
+        html_h = await self._safe_goto(
             f"{_BASE}/sell/history/{release_id}",
             "table, .sales-history-row, #page_content",
         )
-        hist = _parse_sales_history(html)
+        hist = _parse_sales_history(html_h)
 
         # Mercato attuale (ordinato per prezzo crescente)
-        html = await self._safe_goto(
+        html_m = await self._safe_goto(
             f"{_BASE}/sell/release/{release_id}?sort=price&sort_order=asc",
             "table.mpitems, .pagination_total, #page_content",
         )
-        market = _parse_market(html)
+        market = _parse_market(html_m)
+
+        # DEBUG temporaneo: salva l'HTML per ispezione
+        if os.getenv("SCRAPE_DEBUG"):
+            try:
+                d = os.path.dirname(settings.DISCOGS_STATE_PATH)
+                with open(os.path.join(d, "_dbg_history.html"), "w", encoding="utf-8") as f:
+                    f.write(html_h)
+                with open(os.path.join(d, "_dbg_market.html"), "w", encoding="utf-8") as f:
+                    f.write(html_m)
+            except Exception:
+                pass
 
         return {**hist, **market}
