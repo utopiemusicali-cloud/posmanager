@@ -263,21 +263,39 @@ class DiscogsScraper:
                 "Login automatico fallito (probabile captcha). "
                 "Usa scripts/discogs_login_local.py per fare login manuale e caricare i cookie.")
 
+    async def _safe_goto(self, url: str, wait_selector: str) -> str:
+        """Naviga in modo tollerante: le pagine Discogs sono server-rendered,
+        quindi se il goto va in timeout (tracker che tengono aperte connessioni)
+        leggiamo comunque l'HTML già presente."""
+        try:
+            await self._page.goto(url, wait_until="commit", timeout=60000)
+        except Exception:
+            pass
+        # Aspetta che compaia il contenuto che ci serve (o scade)
+        try:
+            await self._page.wait_for_selector(wait_selector, timeout=15000)
+        except Exception:
+            pass
+        await asyncio.sleep(_SLEEP)
+        return await self._page.content()
+
     async def scrape_release(self, release_id: str, do_login_check: bool = True) -> dict:
         """Scarica storico vendite + mercato per una release."""
         if do_login_check:
             await self._ensure_login()
 
         # Storico vendite
-        await self._page.goto(f"{_BASE}/sell/history/{release_id}",
-                              wait_until="domcontentloaded", timeout=30000)
-        await asyncio.sleep(_SLEEP)
-        hist = _parse_sales_history(await self._page.content())
+        html = await self._safe_goto(
+            f"{_BASE}/sell/history/{release_id}",
+            "table, .sales-history-row, #page_content",
+        )
+        hist = _parse_sales_history(html)
 
-        # Mercato attuale
-        await self._page.goto(f"{_BASE}/sell/release/{release_id}?sort=price&sort_order=asc",
-                              wait_until="domcontentloaded", timeout=30000)
-        await asyncio.sleep(_SLEEP)
-        market = _parse_market(await self._page.content())
+        # Mercato attuale (ordinato per prezzo crescente)
+        html = await self._safe_goto(
+            f"{_BASE}/sell/release/{release_id}?sort=price&sort_order=asc",
+            "table.mpitems, .pagination_total, #page_content",
+        )
+        market = _parse_market(html)
 
         return {**hist, **market}
