@@ -1,40 +1,43 @@
 """
 Scraper Discogs LOCALE (gira sul TUO PC) → invia i dati vendita/mercato al server.
 
-Perché locale: Discogs è dietro Cloudflare, che blocca lo scraping headless dal
-server datacenter. Sul tuo PC (browser reale, IP residenziale) Cloudflare passa.
+Usa SeleniumBase in modalità UC (Undetected) che supera la verifica Cloudflare
+(Playwright/Chromium normale viene rilevato via CDP e bloccato).
 
 ── SETUP (una volta) ───────────────────────────────────────────────────────────
-    pip install playwright requests beautifulsoup4
-    playwright install firefox
+    pip install seleniumbase requests beautifulsoup4
+    (SeleniumBase scarica da solo il driver Chrome al primo avvio)
 
 ── USO ──────────────────────────────────────────────────────────────────────────
-    # Scrapa tutte le release "For Sale" che non hanno ancora dati:
+    # Tutte le release "For Sale" senza dati:
     python discogs_scrape_local.py
-
     # Oppure release specifiche:
-    python discogs_scrape_local.py 855183 302240 1048880
+    python discogs_scrape_local.py 855183 302240
 
-Al primo avvio si apre Firefox: fai login su Discogs (anche captcha), poi premi
-INVIO nel terminale. Il profilo resta salvato in ./discogs_profile per le volte dopo.
+Primo avvio: si apre Chrome, supera Cloudflare, fai LOGIN su Discogs, premi INVIO.
+Il profilo resta in ./discogs_profile (login + clearance persistono).
 """
 import sys
 import time
 import re
 import requests
 from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright
+from seleniumbase import Driver
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 SERVER = "https://vps-008f120b.vps.ovh.net"
 ADMIN_USER = "admin"
 ADMIN_PASS = "Osrecords.Admin1"
-PROFILE_DIR = "discogs_profile"   # profilo browser persistente (login + cloudflare)
+PROFILE_DIR = "discogs_profile"
 SLEEP = 3.0
 BASE = "https://www.discogs.com"
 
+_CF_MARKERS = ("just a moment", "esecuzione della verifica", "performing security",
+               "verifying you are human", "challenge-platform", "cf-challenge",
+               "verifica di sicurezza")
 
-# ── Parsing (stessa logica del server) ─────────────────────────────────────────
+
+# ── Parsing ─────────────────────────────────────────────────────────────────────
 def _num(text):
     m = re.search(r"[\d.,]+", text or "")
     if not m:
@@ -154,108 +157,73 @@ def parse_market(html):
             "have": have, "want": want, "avg_rating": None, "ratings_count": None}
 
 
-_CF_MARKERS = ("just a moment", "performing security verification",
-               "verifying you are human", "needs to review the security",
-               "challenge-platform", "cf-challenge")
+# ── Browser UC ────────────────────────────────────────────────────────────────
+def _open_cf(driver, url):
+    """Apre una URL superando l'eventuale challenge Cloudflare."""
+    driver.uc_open_with_reconnect(url, reconnect_time=6)
+    src = driver.get_page_source()
+    if any(m in src.lower() for m in _CF_MARKERS):
+        try:
+            driver.uc_gui_click_captcha()
+        except Exception:
+            pass
+        time.sleep(5)
+        src = driver.get_page_source()
+    return src
 
 
-def _is_challenge(page):
-    try:
-        html = page.content().lower()
-    except Exception:
-        return True
-    return any(m in html for m in _CF_MARKERS)
-
-
-def wait_challenge(page, label=""):
-    """Aspetta che la verifica Cloudflare si risolva. Se non si risolve da sola,
-    chiede all'utente di risolverla a mano nel browser (è headed)."""
-    for _ in range(8):
-        if not _is_challenge(page):
-            return
-        time.sleep(1.5)
-    # Ancora bloccato → intervento manuale
-    print(f"\n⚠  Cloudflare chiede verifica {label}. Risolvila nel browser (clicca la casella).")
-    input(">>> Premi INVIO quando la pagina mostra il contenuto Discogs... ")
-
-
-def scrape_release(page, rid):
-    page.goto(f"{BASE}/sell/history/{rid}", wait_until="domcontentloaded", timeout=60000)
-    wait_challenge(page, f"(history {rid})")
+def scrape_release(driver, rid):
+    html = _open_cf(driver, f"{BASE}/sell/history/{rid}")
+    hist = parse_history(html)
     time.sleep(SLEEP)
-    hist = parse_history(page.content())
-    page.goto(f"{BASE}/sell/release/{rid}?sort=price&sort_order=asc",
-              wait_until="domcontentloaded", timeout=60000)
-    wait_challenge(page, f"(release {rid})")
+    html = _open_cf(driver, f"{BASE}/sell/release/{rid}?sort=price&sort_order=asc")
+    market = parse_market(html)
     time.sleep(SLEEP)
-    market = parse_market(page.content())
     return {**hist, **market}
 
 
 def main():
-    # 1. Login al server
     print(f"→ Login al server {SERVER} ...")
     r = requests.post(f"{SERVER}/api/v1/auth/token",
                       data={"username": ADMIN_USER, "password": ADMIN_PASS}, timeout=30)
     r.raise_for_status()
-    token = r.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
+    headers = {"Authorization": f"Bearer {r.json()['access_token']}"}
 
-    # 2. Lista release da scrapare
     rids = sys.argv[1:]
     if not rids:
-        td = requests.get(f"{SERVER}/api/v1/inventory/sales-todo",
-                          headers=headers, timeout=60).json()
+        td = requests.get(f"{SERVER}/api/v1/inventory/sales-todo", headers=headers, timeout=60).json()
         rids = td["todo"]
-        print(f"→ Da scrapare: {len(rids)} release (su {td['total_inventory']} in inventario, "
-              f"{td['already_scraped']} già fatte)")
+        print(f"→ Da scrapare: {len(rids)} release (inventario {td['total_inventory']}, "
+              f"già fatte {td['already_scraped']})")
     if not rids:
         print("Niente da fare. ✅")
         return
 
-    # 3. Browser persistente — Chrome REALE + anti-rilevamento automazione
-    with sync_playwright() as p:
-        launch_kwargs = dict(
-            headless=False,
-            args=["--disable-blink-features=AutomationControlled",
-                  "--disable-infobars", "--start-maximized"],
-            ignore_default_args=["--enable-automation"],
-            viewport=None,
-        )
-        try:
-            ctx = p.chromium.launch_persistent_context(PROFILE_DIR, channel="chrome", **launch_kwargs)
-        except Exception:
-            print("⚠  Chrome non trovato, uso Chromium bundle (più rilevabile).")
-            ctx = p.chromium.launch_persistent_context(PROFILE_DIR, **launch_kwargs)
-
-        # Nasconde i flag di automazione
-        ctx.add_init_script(
-            "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
-            "window.chrome={runtime:{}};"
-            "Object.defineProperty(navigator,'languages',{get:()=>['it-IT','it','en']});"
-            "Object.defineProperty(navigator,'plugins',{get:()=>[1,2,3,4,5]});"
-        )
-
-        page = ctx.pages[0] if ctx.pages else ctx.new_page()
-        page.goto(BASE, wait_until="domcontentloaded")
-        wait_challenge(page, "(home)")
-        input("\n>>> Assicurati di essere LOGGATO su Discogs nel browser, poi premi INVIO... ")
+    driver = Driver(uc=True, headed=True, user_data_dir=PROFILE_DIR, locale_code="it")
+    try:
+        driver.uc_open_with_reconnect(BASE, reconnect_time=6)
+        if any(m in driver.get_page_source().lower() for m in _CF_MARKERS):
+            try:
+                driver.uc_gui_click_captcha()
+            except Exception:
+                pass
+        input("\n>>> Fai LOGIN su Discogs nel browser (se non già loggato), poi premi INVIO... ")
 
         ok = 0
         for i, rid in enumerate(rids, 1):
             try:
-                data = scrape_release(page, rid)
+                data = scrape_release(driver, rid)
                 resp = requests.post(f"{SERVER}/api/v1/inventory/releases/{rid}/sales-ingest",
                                      headers=headers, json=data, timeout=30)
                 resp.raise_for_status()
                 ok += 1
-                print(f"[{i}/{len(rids)}] release {rid}: "
-                      f"{data['sales_count']} vendite, {data['items_for_sale']} in vendita ✅")
+                print(f"[{i}/{len(rids)}] {rid}: {data['sales_count']} vendite, "
+                      f"{data['items_for_sale']} in vendita ✅")
             except Exception as e:
-                print(f"[{i}/{len(rids)}] release {rid}: ERRORE {e}")
-            time.sleep(SLEEP)
-        ctx.close()
-        print(f"\n✅ Completato: {ok}/{len(rids)} release inviate al server.")
+                print(f"[{i}/{len(rids)}] {rid}: ERRORE {e}")
+    finally:
+        driver.quit()
+    print(f"\n✅ Completato: {ok}/{len(rids)} inviate.")
 
 
 if __name__ == "__main__":
