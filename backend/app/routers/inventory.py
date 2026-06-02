@@ -241,6 +241,47 @@ async def _save_scrape(db: AsyncSession, release_id: str, data: dict) -> Release
     return row
 
 
+class SalesIngest(BaseModel):
+    sales_count: int = 0
+    min_price: float | None = None
+    max_price: float | None = None
+    median_price: float | None = None
+    avg_price: float | None = None
+    last_sold_price: float | None = None
+    last_sold_date: str = ""
+    have: int | None = None
+    want: int | None = None
+    avg_rating: float | None = None
+    ratings_count: int | None = None
+    items_for_sale: int | None = None
+    sales_history: list = []
+    market_listings: list = []
+
+
+@router.post("/releases/{release_id}/sales-ingest")
+async def ingest_release_sales(release_id: str, body: SalesIngest,
+                               db: AsyncSession = Depends(get_db)):
+    """Riceve i dati vendita/mercato scrapati dallo script LOCALE e li salva."""
+    row = await _save_scrape(db, release_id, body.model_dump())
+    return {"ok": True, "release_id": release_id, **_sales_to_dict(row)}
+
+
+@router.get("/sales-todo")
+async def sales_todo(status: str = "For Sale", limit: int = Query(500, ge=1, le=20000),
+                     db: AsyncSession = Depends(get_db)):
+    """Lista release_id in inventario che NON hanno ancora dati vendita.
+    Lo script locale la usa per sapere cosa scrapare."""
+    ids = await _svc.unique_release_ids()
+    if status:
+        # filtra per status: prendi release_id che compaiono in quel tab
+        _total, items = await _svc.query({"status": status}, limit=20000)
+        status_ids = {str(i.get("release_id")) for i in items if i.get("release_id")}
+        ids = [r for r in ids if str(r) in status_ids]
+    existing = {row[0] for row in (await db.execute(select(ReleaseSales.release_id))).all()}
+    todo = [str(r) for r in ids if str(r) not in existing]
+    return {"total_inventory": len(ids), "already_scraped": len(existing), "todo": todo[:limit]}
+
+
 @router.get("/discogs/session-status")
 async def discogs_session_status():
     return {
