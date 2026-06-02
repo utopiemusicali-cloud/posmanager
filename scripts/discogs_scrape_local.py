@@ -154,23 +154,39 @@ def parse_market(html):
             "have": have, "want": want, "avg_rating": None, "ratings_count": None}
 
 
-def wait_cloudflare(page):
-    """Aspetta che la sfida Cloudflare 'Just a moment' si risolva."""
-    for _ in range(20):
-        title = (page.title() or "").lower()
-        if "just a moment" not in title and "moment" not in title:
+_CF_MARKERS = ("just a moment", "performing security verification",
+               "verifying you are human", "needs to review the security",
+               "challenge-platform", "cf-challenge")
+
+
+def _is_challenge(page):
+    try:
+        html = page.content().lower()
+    except Exception:
+        return True
+    return any(m in html for m in _CF_MARKERS)
+
+
+def wait_challenge(page, label=""):
+    """Aspetta che la verifica Cloudflare si risolva. Se non si risolve da sola,
+    chiede all'utente di risolverla a mano nel browser (è headed)."""
+    for _ in range(8):
+        if not _is_challenge(page):
             return
-        time.sleep(1)
+        time.sleep(1.5)
+    # Ancora bloccato → intervento manuale
+    print(f"\n⚠  Cloudflare chiede verifica {label}. Risolvila nel browser (clicca la casella).")
+    input(">>> Premi INVIO quando la pagina mostra il contenuto Discogs... ")
 
 
 def scrape_release(page, rid):
     page.goto(f"{BASE}/sell/history/{rid}", wait_until="domcontentloaded", timeout=60000)
-    wait_cloudflare(page)
+    wait_challenge(page, f"(history {rid})")
     time.sleep(SLEEP)
     hist = parse_history(page.content())
     page.goto(f"{BASE}/sell/release/{rid}?sort=price&sort_order=asc",
               wait_until="domcontentloaded", timeout=60000)
-    wait_cloudflare(page)
+    wait_challenge(page, f"(release {rid})")
     time.sleep(SLEEP)
     market = parse_market(page.content())
     return {**hist, **market}
@@ -197,12 +213,32 @@ def main():
         print("Niente da fare. ✅")
         return
 
-    # 3. Browser persistente
+    # 3. Browser persistente — Chrome REALE + anti-rilevamento automazione
     with sync_playwright() as p:
-        ctx = p.firefox.launch_persistent_context(PROFILE_DIR, headless=False)
+        launch_kwargs = dict(
+            headless=False,
+            args=["--disable-blink-features=AutomationControlled",
+                  "--disable-infobars", "--start-maximized"],
+            ignore_default_args=["--enable-automation"],
+            viewport=None,
+        )
+        try:
+            ctx = p.chromium.launch_persistent_context(PROFILE_DIR, channel="chrome", **launch_kwargs)
+        except Exception:
+            print("⚠  Chrome non trovato, uso Chromium bundle (più rilevabile).")
+            ctx = p.chromium.launch_persistent_context(PROFILE_DIR, **launch_kwargs)
+
+        # Nasconde i flag di automazione
+        ctx.add_init_script(
+            "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
+            "window.chrome={runtime:{}};"
+            "Object.defineProperty(navigator,'languages',{get:()=>['it-IT','it','en']});"
+            "Object.defineProperty(navigator,'plugins',{get:()=>[1,2,3,4,5]});"
+        )
+
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.goto(BASE, wait_until="domcontentloaded")
-        wait_cloudflare(page)
+        wait_challenge(page, "(home)")
         input("\n>>> Assicurati di essere LOGGATO su Discogs nel browser, poi premi INVIO... ")
 
         ok = 0
