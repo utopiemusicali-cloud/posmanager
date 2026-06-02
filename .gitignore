@@ -28,5 +28,7 @@ backups/
 nginx/certbot/conf/
 nginx/certbot/www/
 
-# Nginx SSL config generata da init_ssl.sh (usa il template)
-# (non escludere default.conf perché è la config HTTP-only di fase 1)
+# Nginx: la config attiva (default.conf) è generata sul server (HTTP fase1 o SSL fase2).
+# NON tracciarla, altrimenti git pull sovrascrive la config SSL e rompe HTTPS.
+# In repo restano: default.http.conf.example (fase 1) e default.ssl.conf.template (fase 2).
+nginx/conf.d/default.conf
