@@ -2,9 +2,10 @@ import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Table, Input, Tabs, Tag, Button, message, Alert, Select, Progress, Tooltip } from 'antd'
 import type { ColumnType } from 'antd/es/table'
-import { PlusOutlined, SearchOutlined, SyncOutlined, ClearOutlined, DatabaseOutlined } from '@ant-design/icons'
+import { PlusOutlined, SearchOutlined, SyncOutlined, ClearOutlined, DatabaseOutlined, LineChartOutlined } from '@ant-design/icons'
 import client from '@/api/client'
 import AddInventoryModal from './AddInventoryModal'
+import SalesDrawer from './SalesDrawer'
 
 type Row = Record<string, string>
 
@@ -124,6 +125,7 @@ function InventoryTable({ status }: { status: string }) {
   const [filters, setFilters] = useState<FilterState>({})
   const [sort, setSort] = useState('listed_desc')
   const [page, setPage] = useState(1)
+  const [salesRow, setSalesRow] = useState<Row | null>(null)
 
   const { data: facets } = useQuery({
     queryKey: ['inv-facets', status, search],
@@ -137,6 +139,21 @@ function InventoryTable({ status }: { status: string }) {
   })
 
   const items: Row[] = data?.items ?? []
+
+  // Colonna azione "Vendite & Mercato" (solo se l'articolo ha release_id)
+  const columns: ColumnType<Row>[] = [
+    ...groupedColumns,
+    {
+      title: '', key: 'sales', width: 48, align: 'center' as const,
+      render: (_: unknown, r: Row) => r.release_id ? (
+        <Tooltip title="Vendite & Mercato">
+          <Button size="small" type="text" icon={<LineChartOutlined />}
+            onClick={(e) => { e.stopPropagation(); setSalesRow(r) }} />
+        </Tooltip>
+      ) : null,
+    },
+  ]
+
   const setF = (k: keyof FilterState, v?: string) => { setFilters(p => ({ ...p, [k]: v })); setPage(1) }
   const clearAll = () => { setFilters({}); setSearch(''); setPage(1) }
   const activeCount = Object.values(filters).filter(Boolean).length + (search ? 1 : 0)
@@ -209,11 +226,20 @@ function InventoryTable({ status }: { status: string }) {
 
       <Table
         dataSource={items}
-        columns={groupedColumns}
+        columns={columns}
         rowKey={(r) => `${r.source}-${r.listing_id}`}
         loading={isLoading}
         size="small"
         pagination={{ current: page, total: data?.total ?? 0, pageSize: 100, onChange: setPage }}
+      />
+
+      <SalesDrawer
+        releaseId={salesRow?.release_id || null}
+        myMedia={salesRow?.media_condition}
+        mySleeve={salesRow?.sleeve_condition}
+        myPrice={salesRow ? parseFloat(salesRow.price) || undefined : undefined}
+        title={salesRow ? `${salesRow.artist} — ${salesRow.title}` : undefined}
+        onClose={() => setSalesRow(null)}
       />
     </div>
   )
