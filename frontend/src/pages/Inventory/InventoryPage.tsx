@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Table, Input, Tabs, Tag, Button, message, Alert, Select, Progress, Tooltip } from 'antd'
 import type { ColumnType } from 'antd/es/table'
@@ -255,8 +255,7 @@ export default function InventoryPage() {
   const [syncing, setSyncing] = useState(false)
   const [syncInfo, setSyncInfo] = useState<string | null>(null)
   const [addOpen, setAddOpen] = useState(false)
-  const [enriching, setEnriching] = useState(false)
-  const [enrichProg, setEnrichProg] = useState<{ enriched: number; total: number } | null>(null)
+  const [enrichProg, setEnrichProg] = useState<{ enriched: number; total: number; running: boolean } | null>(null)
   const qc = useQueryClient()
 
   const handleSync = async () => {
@@ -271,29 +270,45 @@ export default function InventoryPage() {
     } finally { setSyncing(false) }
   }
 
-  // Arricchimento Genre/Style/Year a batch finché completo
-  const handleEnrich = async () => {
-    setEnriching(true)
+  // Polling stato arricchimento (il task gira sul server, autonomo)
+  const fetchEnrichStatus = async () => {
     try {
-      const st = await client.get('/api/v1/inventory/enrich-status')
-      let { enriched, total } = st.data
-      setEnrichProg({ enriched, total })
-      // Loop di batch
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const r = await client.post('/api/v1/inventory/enrich-batch?size=40')
-        enriched += r.data.processed
-        setEnrichProg({ enriched, total })
-        if (r.data.done || r.data.processed === 0) break
-      }
-      message.success('Metadati Genre/Style/Year aggiornati!')
-      qc.invalidateQueries({ queryKey: ['inventory'] })
-      qc.invalidateQueries({ queryKey: ['inv-facets'] })
-    } catch {
-      message.error('Errore durante l\'arricchimento (rate-limit Discogs?). Riprova: riprende da dove era.')
-    } finally { setEnriching(false) }
+      const r = await client.get('/api/v1/inventory/enrich-status')
+      setEnrichProg({ enriched: r.data.enriched, total: r.data.total, running: r.data.running })
+      return r.data
+    } catch { return null }
   }
 
+  useEffect(() => {
+    fetchEnrichStatus()
+    const id = setInterval(async () => {
+      const s = await fetchEnrichStatus()
+      if (s && !s.running) {
+        // aggiorna i dati quando finisce
+        qc.invalidateQueries({ queryKey: ['inventory'] })
+        qc.invalidateQueries({ queryKey: ['inv-facets'] })
+      }
+    }, 5000)
+    return () => clearInterval(id)
+  }, [])
+
+  const handleEnrichStart = async () => {
+    try {
+      const r = await client.post('/api/v1/inventory/enrich-start')
+      if (r.data.already_running) message.info('Arricchimento già in corso')
+      else message.success('Arricchimento avviato sul server (continua anche se chiudi il browser)')
+      fetchEnrichStatus()
+    } catch {
+      message.error('Errore avvio arricchimento')
+    }
+  }
+
+  const handleEnrichStop = async () => {
+    await client.post('/api/v1/inventory/enrich-stop')
+    message.info('Arricchimento in arresto…')
+  }
+
+  const running = enrichProg?.running
   const pct = enrichProg && enrichProg.total ? Math.round(enrichProg.enriched / enrichProg.total * 100) : 0
 
   return (
@@ -304,14 +319,15 @@ export default function InventoryPage() {
         <Button icon={<SyncOutlined spin={syncing} />} onClick={handleSync} loading={syncing}>
           {syncing ? 'Download da Discogs...' : 'Aggiorna da Discogs'}
         </Button>
-        <Tooltip title="Scarica Genre/Style/Year da Discogs per ogni articolo (~55/min, riprendibile)">
-          <Button icon={<DatabaseOutlined />} onClick={handleEnrich} loading={enriching}>
-            Arricchisci metadati
+        <Tooltip title="Scarica i metadati completi da Discogs (gira sul server, autonomo)">
+          <Button icon={<DatabaseOutlined />} onClick={handleEnrichStart} disabled={running}>
+            {running ? 'Arricchimento in corso…' : 'Arricchisci metadati'}
           </Button>
         </Tooltip>
-        {enriching && enrichProg && (
-          <span style={{ minWidth: 200 }}>
-            <Progress percent={pct} size="small"
+        {running && <Button danger size="small" onClick={handleEnrichStop}>Stop</Button>}
+        {enrichProg && (enrichProg.enriched < enrichProg.total || running) && (
+          <span style={{ minWidth: 220 }}>
+            <Progress percent={pct} size="small" status={running ? 'active' : 'normal'}
               format={() => `${enrichProg.enriched}/${enrichProg.total}`} />
           </span>
         )}

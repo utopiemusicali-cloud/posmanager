@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from datetime import datetime
 
@@ -14,7 +15,7 @@ from app.database import get_db
 from app.models.inventory_item import InventoryItem
 from app.models.release_meta import ReleaseMeta
 from app.models.release_sales import ReleaseSales
-from app.services.discogs_enrich_service import fetch_release_meta
+from app.services import enrich_worker
 from app.services.discogs_scraper_service import DiscogsScraper
 from app.services.discogs_lookup_service import lookup_release
 from app.services.discogs_sync_service import sync_inventory
@@ -131,35 +132,29 @@ async def enrich_status(db: AsyncSession = Depends(get_db)):
     ids = {str(r) for r in await _svc.unique_release_ids()}
     done = await _fully_enriched_ids(db)
     enriched = len(ids & done)
-    return {"total": len(ids), "enriched": enriched, "remaining": len(ids) - enriched}
+    st = enrich_worker.read_state()
+    return {
+        "total": len(ids), "enriched": enriched, "remaining": len(ids) - enriched,
+        "running": enrich_worker.is_running(), "error": st.get("error", ""),
+    }
 
 
-@router.post("/enrich-batch")
-async def enrich_batch_ep(size: int = Query(40, ge=1, le=55),
-                          db: AsyncSession = Depends(get_db)):
+@router.post("/enrich-start")
+async def enrich_start():
+    """Avvia l'arricchimento come task di background sul server (autonomo)."""
     if not settings.DISCOGS_TOKEN:
         raise HTTPException(400, "DISCOGS_TOKEN non configurato")
+    if enrich_worker.is_running():
+        return {"started": False, "already_running": True}
+    ids = [str(r) for r in await _svc.unique_release_ids()]
+    asyncio.create_task(enrich_worker.run_enrich(ids))
+    return {"started": True}
 
-    inv_ids = [str(r) for r in await _svc.unique_release_ids()]
-    done = await _fully_enriched_ids(db)
-    todo = [r for r in inv_ids if r not in done][:size]
-    if not todo:
-        return {"processed": 0, "remaining": 0, "done": True}
 
-    try:
-        metas = await fetch_release_meta(settings.DISCOGS_TOKEN, todo)
-    except Exception as e:
-        raise HTTPException(502, f"Errore Discogs API: {e}")
-
-    for m in metas:
-        await db.merge(ReleaseMeta(**m))
-    await db.commit()
-
-    # ricarica meta per i filtri (genre/style/year)
-    await _sync_meta(db)
-    done = await _fully_enriched_ids(db)
-    remaining = len([r for r in inv_ids if r not in done])
-    return {"processed": len(metas), "remaining": remaining, "done": remaining == 0}
+@router.post("/enrich-stop")
+async def enrich_stop():
+    enrich_worker.request_stop()
+    return {"ok": True}
 
 
 # ── Sync da Discogs ────────────────────────────────────────────────────────────
