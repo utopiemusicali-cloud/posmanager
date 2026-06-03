@@ -118,10 +118,20 @@ async def get_facets(status: str | None = None, q: str | None = None,
 
 # ── Arricchimento Genre/Style/Year (tabella release_meta) ──────────────────────
 
+async def _fully_enriched_ids(db: AsyncSession) -> set[str]:
+    """release_id che hanno già i dati COMPLETI (raw_json presente)."""
+    rows = await db.execute(
+        select(ReleaseMeta.release_id).where(ReleaseMeta.raw_json.isnot(None))
+    )
+    return {r[0] for r in rows.all()}
+
+
 @router.get("/enrich-status")
 async def enrich_status(db: AsyncSession = Depends(get_db)):
-    await _sync_meta(db)
-    return await _svc.enrich_progress()
+    ids = {str(r) for r in await _svc.unique_release_ids()}
+    done = await _fully_enriched_ids(db)
+    enriched = len(ids & done)
+    return {"total": len(ids), "enriched": enriched, "remaining": len(ids) - enriched}
 
 
 @router.post("/enrich-batch")
@@ -129,24 +139,27 @@ async def enrich_batch_ep(size: int = Query(40, ge=1, le=55),
                           db: AsyncSession = Depends(get_db)):
     if not settings.DISCOGS_TOKEN:
         raise HTTPException(400, "DISCOGS_TOKEN non configurato")
-    await _sync_meta(db)
-    ids = await _svc.unenriched_release_ids(limit=size)
-    if not ids:
+
+    inv_ids = [str(r) for r in await _svc.unique_release_ids()]
+    done = await _fully_enriched_ids(db)
+    todo = [r for r in inv_ids if r not in done][:size]
+    if not todo:
         return {"processed": 0, "remaining": 0, "done": True}
 
     try:
-        metas = await fetch_release_meta(settings.DISCOGS_TOKEN, ids)
+        metas = await fetch_release_meta(settings.DISCOGS_TOKEN, todo)
     except Exception as e:
         raise HTTPException(502, f"Errore Discogs API: {e}")
 
-    # Upsert nella tabella release_meta
     for m in metas:
         await db.merge(ReleaseMeta(**m))
     await db.commit()
 
+    # ricarica meta per i filtri (genre/style/year)
     await _sync_meta(db)
-    prog = await _svc.enrich_progress()
-    return {"processed": len(metas), "remaining": prog["remaining"], "done": prog["remaining"] == 0}
+    done = await _fully_enriched_ids(db)
+    remaining = len([r for r in inv_ids if r not in done])
+    return {"processed": len(metas), "remaining": remaining, "done": remaining == 0}
 
 
 # ── Sync da Discogs ────────────────────────────────────────────────────────────
