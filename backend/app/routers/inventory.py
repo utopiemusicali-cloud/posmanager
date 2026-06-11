@@ -298,6 +298,43 @@ async def discogs_session_status():
     }
 
 
+@router.get("/releases/{release_id}/meta")
+async def get_release_meta_full(release_id: str, db: AsyncSession = Depends(get_db)):
+    """Metadati enrichment (release_meta) + estratti dal raw_json (tracklist, immagini, video)."""
+    import json
+    row = await db.get(ReleaseMeta, str(release_id))
+    if not row:
+        return {"found": False}
+    raw = {}
+    if row.raw_json:
+        try:
+            raw = json.loads(row.raw_json)
+        except Exception:
+            raw = {}
+    return {
+        "found": True,
+        "artist": row.artist, "title": row.title, "label": row.label, "catno": row.catno,
+        "format": row.format, "year": row.year, "country": row.country, "released": row.released,
+        "genre": row.genre, "style": row.style, "barcode": row.barcode, "master_id": row.master_id,
+        "thumbnail": row.thumbnail, "cover_image": row.cover_image,
+        "have": row.have, "want": row.want, "rating_avg": row.rating_avg,
+        "rating_count": row.rating_count, "num_for_sale": row.num_for_sale,
+        "lowest_price": row.lowest_price, "notes": row.notes,
+        "tracklist": [
+            {"position": t.get("position", ""), "title": t.get("title", ""), "duration": t.get("duration", "")}
+            for t in (raw.get("tracklist") or [])
+        ],
+        "images": [
+            {"uri": i.get("uri", ""), "thumb": i.get("uri150", i.get("uri", ""))}
+            for i in (raw.get("images") or [])
+        ],
+        "videos": [
+            {"uri": v.get("uri", ""), "title": v.get("title", "")}
+            for v in (raw.get("videos") or [])
+        ],
+    }
+
+
 @router.get("/releases/{release_id}/sales")
 async def get_release_sales(release_id: str, db: AsyncSession = Depends(get_db)):
     row = await db.get(ReleaseSales, str(release_id))

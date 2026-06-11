@@ -238,6 +238,7 @@ function InventoryTable({ status }: { status: string }) {
         myMedia={salesRow?.media_condition}
         mySleeve={salesRow?.sleeve_condition}
         myPrice={salesRow ? parseFloat(salesRow.price) || undefined : undefined}
+        myLocation={salesRow?.location}
         title={salesRow ? `${salesRow.artist} — ${salesRow.title}` : undefined}
         onClose={() => setSalesRow(null)}
       />
