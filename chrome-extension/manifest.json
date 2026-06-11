@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "POSMANAGER — Discogs Scraper",
+  "version": "1.0.0",
+  "description": "Scrapa storico vendite e mercato Discogs (usando la tua sessione) e li invia al server POSMANAGER.",
+  "permissions": ["storage", "tabs"],
+  "host_permissions": [
+    "https://www.discogs.com/*",
+    "https://vps-008f120b.vps.ovh.net/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "POSMANAGER Scraper"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.discogs.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
