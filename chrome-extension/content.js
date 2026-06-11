@@ -132,34 +132,13 @@ async function scrapeRelease(rid) {
   return { ...hist, ...market }
 }
 
-const send = (msg) => new Promise(res => chrome.runtime.sendMessage(msg, res))
-
-let looping = false
-async function loop() {
-  if (looping) return
-  looping = true
-  try {
-    while (true) {
-      const st = await send({ type: 'isRunning' })
-      if (!st || !st.running) break
-      const next = await send({ type: 'next' })
-      if (!next || next.done) { await send({ type: 'finished' }); break }
-      const rid = next.release_id
-      try {
-        const data = await scrapeRelease(rid)
-        await send({ type: 'result', release_id: rid, data })
-      } catch (e) {
-        await send({ type: 'error', release_id: rid, error: String(e) })
-        // se è cloudflare, fermati per non bruciare la coda
-        if (String(e).includes('Cloudflare')) { await send({ type: 'pause' }); break }
-      }
-      await sleep(SLEEP)
-    }
-  } finally { looping = false }
-}
-
-// Avvio: se lo scraping è attivo, parte il loop su questa tab Discogs
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg && msg.type === 'startLoop') loop()
+// Gestisce la richiesta di scraping di UNA release (dal background).
+// Risponde con i dati o un errore. Nessuna comunicazione col server qui.
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg && msg.type === 'scrapeOne' && msg.release_id) {
+    scrapeRelease(String(msg.release_id))
+      .then(data => sendResponse({ ok: true, data }))
+      .catch(e => sendResponse({ ok: false, error: String(e && e.message || e) }))
+    return true // risposta async
+  }
 })
-send({ type: 'isRunning' }).then(st => { if (st && st.running) loop() })

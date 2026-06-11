@@ -1,10 +1,13 @@
-import { useQuery } from '@tanstack/react-query'
+import { useEffect, useRef, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Drawer, Spin, Empty, Row, Col, Card, Table, Typography, Statistic, Tooltip,
-  Tag, Image, Collapse, Descriptions, Divider,
+  Tag, Image, Collapse, Descriptions, Divider, Button, message,
 } from 'antd'
+import { SyncOutlined } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
 import client from '@/api/client'
+import { isExtensionPresent, scrapeReleaseViaExtension } from '@/api/extScraper'
 import dayjs from 'dayjs'
 
 const { Text, Link, Title } = Typography
@@ -102,6 +105,10 @@ function SalesChart({ sales, myPrice }: { sales: Sale[]; myPrice?: number }) {
 }
 
 export default function SalesDrawer({ releaseId, myMedia, mySleeve, myPrice, myLocation, title, onClose }: Props) {
+  const qc = useQueryClient()
+  const [scraping, setScraping] = useState(false)
+  const autoTried = useRef<string | null>(null)
+
   const { data: meta } = useQuery({
     queryKey: ['release-meta', releaseId],
     queryFn: async () => (await client.get(`/api/v1/inventory/releases/${releaseId}/meta`)).data as MetaData,
@@ -112,6 +119,34 @@ export default function SalesDrawer({ releaseId, myMedia, mySleeve, myPrice, myL
     queryFn: async () => (await client.get(`/api/v1/inventory/releases/${releaseId}/sales`)).data as SalesData,
     enabled: !!releaseId,
   })
+
+  // Scrapa via estensione → salva sul server (col token della web app) → ricarica
+  const runScrape = async () => {
+    if (!releaseId) return
+    if (!isExtensionPresent()) {
+      message.warning('Estensione Chrome non rilevata. Installala e tieni una scheda Discogs (loggato) aperta.')
+      return
+    }
+    setScraping(true)
+    try {
+      const data = await scrapeReleaseViaExtension(releaseId)
+      await client.post(`/api/v1/inventory/releases/${releaseId}/sales-ingest`, data)
+      await qc.invalidateQueries({ queryKey: ['release-sales', releaseId] })
+      message.success('Dati mercato aggiornati')
+    } catch (e) {
+      message.error((e as Error).message || 'Errore scraping estensione')
+    } finally { setScraping(false) }
+  }
+
+  // Auto-scrape all'apertura se mancano i dati di vendita
+  useEffect(() => {
+    if (!releaseId || isLoading || scraping) return
+    if (sales && !sales.scraped && autoTried.current !== releaseId && isExtensionPresent()) {
+      autoTried.current = releaseId
+      runScrape()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [releaseId, isLoading, sales])
 
   const matchMine = (l: Listing) => !!myMedia && l.media === myMedia && (!mySleeve || l.sleeve === mySleeve)
 
@@ -148,7 +183,19 @@ export default function SalesDrawer({ releaseId, myMedia, mySleeve, myPrice, myL
 
   return (
     <Drawer open={!!releaseId} onClose={onClose} width={820}
-      title={<span>📊 Vendite & Mercato {title ? `— ${title}` : `release ${releaseId}`}</span>}>
+      title={
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <span>📊 Vendite & Mercato {title ? `— ${title}` : `release ${releaseId}`}</span>
+          <Button size="small" icon={<SyncOutlined spin={scraping} />} onClick={runScrape} loading={scraping}>
+            Aggiorna mercato
+          </Button>
+        </div>
+      }>
+      {scraping && (
+        <div style={{ marginBottom: 12 }}>
+          <Spin size="small" /> <Text type="secondary">Scraping mercato in corso via estensione…</Text>
+        </div>
+      )}
 
       {/* ── 1. RELEASE (enrichment API) ── */}
       {hasMeta && (

@@ -3,43 +3,23 @@
 <head>
   <meta charset="UTF-8">
   <style>
-    body { font-family: system-ui, sans-serif; width: 300px; padding: 12px; margin: 0; }
+    body { font-family: system-ui, sans-serif; width: 280px; padding: 14px; margin: 0; }
     h3 { margin: 0 0 8px; font-size: 15px; }
-    button { padding: 7px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; }
-    .primary { background: #1677ff; color: #fff; }
-    .danger { background: #e74c3c; color: #fff; }
-    .row { display: flex; gap: 8px; margin-top: 10px; }
-    .row button { flex: 1; }
-    label { display: block; font-size: 11px; color: #666; margin-top: 8px; }
-    input { width: 100%; box-sizing: border-box; padding: 6px; margin-top: 2px; border: 1px solid #ccc; border-radius: 4px; }
-    #conn { font-size: 12px; margin-top: 4px; }
-    #status { margin-top: 12px; font-size: 12px; }
-    .bar { height: 8px; background: #eee; border-radius: 4px; overflow: hidden; margin-top: 6px; }
-    .bar > div { height: 100%; background: #27ae60; width: 0%; transition: width .3s; }
-    .err { color: #e74c3c; font-size: 11px; margin-top: 6px; word-break: break-word; }
-    .ok { color: #27ae60; }
+    p { font-size: 12px; color: #555; line-height: 1.5; }
+    .ok { color: #27ae60; font-weight: 600; }
+    ol { padding-left: 18px; font-size: 12px; color: #555; }
+    li { margin-bottom: 4px; }
   </style>
 </head>
 <body>
   <h3>📊 POSMANAGER Scraper</h3>
-  <div id="conn">…</div>
-
-  <label>Stato articoli</label>
-  <input id="statusFilter" value="For Sale">
-
-  <div class="row">
-    <button id="startBtn" class="primary">Avvia</button>
-    <button id="stopBtn" class="danger">Stop</button>
-  </div>
-
-  <div id="status"></div>
-  <div class="bar"><div id="barFill"></div></div>
-  <div id="errBox" class="err"></div>
-
-  <p style="font-size:10px;color:#999;margin-top:10px;">
-    Connessione automatica dalla web app POSMANAGER (devi essere loggato).
-    Tieni aperta una scheda <b>discogs.com</b> dove sei loggato.
-  </p>
-  <script src="popup.js"></script>
+  <p class="ok">✓ Estensione attiva</p>
+  <p>Lo scraping è guidato dalla web app POSMANAGER. Non serve configurare nulla qui.</p>
+  <ol>
+    <li>Apri la <b>web app</b> POSMANAGER (loggato)</li>
+    <li>Tieni aperta una scheda <b>discogs.com</b> (loggato)</li>
+    <li>Nell'Inventario apri <b>📊 Vendite & Mercato</b> di un articolo: i dati di mercato vengono scrapati automaticamente</li>
+  </ol>
+  <p style="color:#999;font-size:10px;">L'estensione legge solo le pagine Discogs con la tua sessione. Non gestisce credenziali né comunica col server: i dati li salva la web app.</p>
 </body>
 </html>

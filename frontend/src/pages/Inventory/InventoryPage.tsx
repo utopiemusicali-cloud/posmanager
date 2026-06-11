@@ -269,10 +269,6 @@ export default function InventoryPage() {
     return () => window.removeEventListener('message', h)
   }, [])
 
-  const startExtScrape = () => {
-    window.postMessage({ __posmanager: true, action: 'scrape-start', status: 'For Sale' }, '*')
-    message.success('Scraping vendite avviato nell\'estensione Chrome (continua in background)')
-  }
 
   const handleSync = async () => {
     setSyncing(true); setSyncInfo(null)
@@ -348,10 +344,8 @@ export default function InventoryPage() {
           </span>
         )}
         {extPresent && (
-          <Tooltip title="Scrapa storico vendite + mercato delle 'For Sale' tramite l'estensione Chrome">
-            <Button icon={<LineChartOutlined />} onClick={startExtScrape}>
-              Scrapa vendite (estensione)
-            </Button>
+          <Tooltip title="Estensione Chrome rilevata: i dati di mercato si scaricano aprendo 📊 su un articolo">
+            <Tag color="green">🧩 Estensione attiva</Tag>
           </Tooltip>
         )}
       </div>
