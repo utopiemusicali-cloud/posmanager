@@ -6,7 +6,8 @@
   "permissions": ["storage", "tabs"],
   "host_permissions": [
     "https://www.discogs.com/*",
-    "https://vps-008f120b.vps.ovh.net/*"
+    "https://vps-008f120b.vps.ovh.net/*",
+    "https://162.19.226.27/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -22,7 +23,7 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://vps-008f120b.vps.ovh.net/*"],
+      "matches": ["https://vps-008f120b.vps.ovh.net/*", "https://162.19.226.27/*"],
       "js": ["bridge.js"],
       "run_at": "document_idle"
     }
