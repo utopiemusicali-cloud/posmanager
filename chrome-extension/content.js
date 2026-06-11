@@ -83,6 +83,10 @@ function parseMarket(html) {
       if (mc) { const m = mc.textContent.match(COND_RE); if (m) media = m[1] }
       const sl = desc.querySelector('.item_sleeve_condition')
       if (sl) { const m = sl.textContent.match(COND_RE); sleeve = m ? m[1] : sl.textContent.trim() }
+      // commenti venditore (p.hide_mobile che non è label_and_cat né condition)
+      let comments = ''
+      const cp = desc.querySelector('p.hide_mobile:not(.label_and_cat)')
+      if (cp && !cp.querySelector('.mplabel')) comments = cp.textContent.trim()
       let price = null, ship = null, total = null, curr = 'EUR'
       const ps = row.querySelector('.item_price .price, .price')
       if (ps) { curr = cur(ps.textContent); const pv = ps.getAttribute('data-pricevalue'); price = pv ? parseFloat(pv) : num(ps.textContent) }
@@ -103,7 +107,7 @@ function parseMarket(html) {
           if (t.includes('Ships From')) shipFrom = t.split('Ships From:').pop().trim()
         }
       }
-      listings.push({ seller, feedback_pct: fbPct, feedback_count: fbCount, ship_from: shipFrom, media, sleeve, price, shipping: ship, total, currency: curr })
+      listings.push({ seller, feedback_pct: fbPct, feedback_count: fbCount, ship_from: shipFrom, media, sleeve, comments, price, shipping: ship, total, currency: curr })
     }
   }
   let have = null, want = null

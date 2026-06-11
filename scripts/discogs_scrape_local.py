@@ -121,6 +121,10 @@ def parse_market(html):
             if sl:
                 m = _COND_RE.search(sl.get_text(" ", strip=True))
                 sleeve = m.group(1) if m else sl.get_text(strip=True)
+            comments = ""
+            cp = desc.select_one("p.hide_mobile:not(.label_and_cat)")
+            if cp and not cp.select_one(".mplabel"):
+                comments = cp.get_text(" ", strip=True)
             price = ship = total = None
             cur = "EUR"
             ps = row.select_one(".item_price .price, .price")
@@ -149,7 +153,8 @@ def parse_market(html):
                         ship_from = t.split("Ships From:")[-1].strip()
             listings.append({"seller": seller, "feedback_pct": fb_pct, "feedback_count": fb_count,
                              "ship_from": ship_from, "media": media, "sleeve": sleeve,
-                             "price": price, "shipping": ship, "total": total, "currency": cur})
+                             "comments": comments, "price": price, "shipping": ship,
+                             "total": total, "currency": cur})
     have = want = None
     for res in soup.select(".community_result"):
         label = res.get_text(" ", strip=True).lower()

@@ -16,7 +16,7 @@ const { Text, Link, Title } = Typography
 interface Sale { date: string; media: string; sleeve: string; price: number; currency: string }
 interface Listing {
   seller: string; feedback_pct: string; feedback_count: number | null
-  ship_from: string; media: string; sleeve: string
+  ship_from: string; media: string; sleeve: string; comments?: string
   price: number | null; shipping: number | null; total: number | null; currency: string
 }
 interface SalesData {
@@ -63,6 +63,8 @@ const flag = (c: string) => {
   return String.fromCodePoint(...[...code].map(x => 0x1f1e6 + x.charCodeAt(0) - 65))
 }
 const countryShort = (c: string) => COUNTRY_CODE[c?.trim()] ?? (c || '').slice(0, 3).toUpperCase()
+// "Very Good Plus (VG+)" → "VG+"; "Generic" → "Generic"
+const abbr = (cond: string) => { const m = (cond || '').match(/\(([^)]+)\)/); return m ? m[1] : (cond || '—') }
 
 // ── Grafico storico prezzi ──────────────────────────────────────────────────
 function SalesChart({ sales, myPrice }: { sales: Sale[]; myPrice?: number }) {
@@ -152,30 +154,43 @@ export default function SalesDrawer({ releaseId, myMedia, mySleeve, myPrice, myL
 
   const marketCols: ColumnType<Listing>[] = [
     {
-      title: 'Venditore', dataIndex: 'seller', ellipsis: true,
+      title: 'Venditore', dataIndex: 'seller', width: 120, ellipsis: true,
       render: (v: string, r: Listing) => (
-        <div style={{ lineHeight: 1.25 }}>
-          <Link href={`https://www.discogs.com/seller/${v}/profile`} target="_blank">{v || '—'}</Link>
+        <div style={{ lineHeight: 1.2 }}>
+          <Link href={`https://www.discogs.com/seller/${v}/profile`} target="_blank"
+            style={{ fontSize: 12 }}>{v || '—'}</Link>
           {(r.feedback_pct || r.feedback_count != null) && (
-            <div style={{ fontSize: 11, color: '#888' }}>
-              {r.feedback_count != null ? `${r.feedback_count} fb` : ''}{r.feedback_pct ? ` · ${r.feedback_pct}` : ''}
+            <div style={{ fontSize: 10, color: '#999' }}>
+              {r.feedback_count != null ? `${r.feedback_count}` : ''}{r.feedback_pct ? ` · ${r.feedback_pct}` : ''}
             </div>
           )}
         </div>
       ),
     },
-    { title: 'Paese', dataIndex: 'ship_from', width: 80, align: 'center' as const,
+    { title: 'Paese', dataIndex: 'ship_from', width: 70, align: 'center' as const,
       render: (v: string) => <Tooltip title={v}><span>{flag(v)} {countryShort(v)}</span></Tooltip> },
-    { title: 'Media', dataIndex: 'media', width: 115, ellipsis: true },
-    { title: 'Sleeve', dataIndex: 'sleeve', width: 115, ellipsis: true },
-    { title: 'Prezzo', key: 'price', width: 95, align: 'right' as const,
+    {
+      title: 'Cond.', key: 'cond', width: 90,
+      render: (_: unknown, r: Listing) => (
+        <Tooltip title={`Media: ${r.media} · Sleeve: ${r.sleeve}`}>
+          <b>{abbr(r.media)}</b> <span style={{ color: '#bbb' }}>|</span> {abbr(r.sleeve)}
+        </Tooltip>
+      ),
+    },
+    {
+      title: 'Note', dataIndex: 'comments', ellipsis: true,
+      render: (v: string) => v
+        ? <Tooltip title={v}><span style={{ fontSize: 11, color: '#888' }}>{v}</span></Tooltip>
+        : <span style={{ color: '#ddd' }}>—</span>,
+    },
+    { title: 'Prezzo', key: 'price', width: 90, align: 'right' as const,
       render: (_: unknown, r: Listing) => (
         <div style={{ lineHeight: 1.2 }}>
           <div>{money(r.price, r.currency)}</div>
           {r.shipping != null && <div style={{ fontSize: 11, color: '#aaa' }}>+{money(r.shipping, r.currency)}</div>}
         </div>
       ) },
-    { title: 'Totale', dataIndex: 'total', width: 90, align: 'right' as const,
+    { title: 'Totale', dataIndex: 'total', width: 88, align: 'right' as const,
       render: (v: number, r: Listing) => <b>{money(v, r.currency)}</b> },
   ]
 
