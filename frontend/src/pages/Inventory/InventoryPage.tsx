@@ -256,7 +256,22 @@ export default function InventoryPage() {
   const [syncInfo, setSyncInfo] = useState<string | null>(null)
   const [addOpen, setAddOpen] = useState(false)
   const [enrichProg, setEnrichProg] = useState<{ enriched: number; total: number; running: boolean } | null>(null)
+  const [extPresent, setExtPresent] = useState(false)
   const qc = useQueryClient()
+
+  // Rilevamento estensione Chrome (il bridge annuncia la sua presenza)
+  useEffect(() => {
+    const h = (e: MessageEvent) => {
+      if (e.source === window && e.data && e.data.__posmanager_ext) setExtPresent(true)
+    }
+    window.addEventListener('message', h)
+    return () => window.removeEventListener('message', h)
+  }, [])
+
+  const startExtScrape = () => {
+    window.postMessage({ __posmanager: true, action: 'scrape-start', status: 'For Sale' }, '*')
+    message.success('Scraping vendite avviato nell\'estensione Chrome (continua in background)')
+  }
 
   const handleSync = async () => {
     setSyncing(true); setSyncInfo(null)
@@ -330,6 +345,13 @@ export default function InventoryPage() {
             <Progress percent={pct} size="small" status={running ? 'active' : 'normal'}
               format={() => `${enrichProg.enriched}/${enrichProg.total}`} />
           </span>
+        )}
+        {extPresent && (
+          <Tooltip title="Scrapa storico vendite + mercato delle 'For Sale' tramite l'estensione Chrome">
+            <Button icon={<LineChartOutlined />} onClick={startExtScrape}>
+              Scrapa vendite (estensione)
+            </Button>
+          </Tooltip>
         )}
       </div>
 

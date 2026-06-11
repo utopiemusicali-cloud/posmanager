@@ -20,6 +20,11 @@
       "matches": ["https://www.discogs.com/*"],
       "js": ["content.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://vps-008f120b.vps.ovh.net/*"],
+      "js": ["bridge.js"],
+      "run_at": "document_idle"
     }
   ]
 }

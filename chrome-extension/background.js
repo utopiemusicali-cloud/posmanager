@@ -16,24 +16,21 @@ async function serverFetch(path, opts = {}) {
   return fetch(`${s.server}${path}`, { ...opts, headers })
 }
 
-async function login(server, user, pass) {
-  const body = new URLSearchParams({ username: user, password: pass })
-  const r = await fetch(`${server}/api/v1/auth/token`, {
-    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body,
-  })
-  if (!r.ok) throw new Error(`Login fallito (${r.status})`)
-  const j = await r.json()
-  await setState({ server, token: j.access_token })
-  return true
+// Auto-connessione: token preso dalla sessione web app (via bridge.js)
+async function setAuth(server, token) {
+  if (token) await setState({ server, token })
 }
 
-async function start(status) {
+async function start(status, releaseIds) {
   const s = await getState()
-  if (!s.token) throw new Error('Non autenticato')
-  // Carica la coda dei release da scrapare
-  const r = await serverFetch(`/api/v1/inventory/sales-todo?status=${encodeURIComponent(status || 'For Sale')}&limit=20000`)
-  const j = await r.json()
-  const queue = j.todo || []
+  if (!s.token) throw new Error('Non connesso: apri la web app POSMANAGER (loggato) per auto-connettere')
+  // La coda arriva dalla web app (release_ids) oppure dal server (sales-todo)
+  let queue = releaseIds
+  if (!queue || !queue.length) {
+    const r = await serverFetch(`/api/v1/inventory/sales-todo?status=${encodeURIComponent(status || 'For Sale')}&limit=20000`)
+    const j = await r.json()
+    queue = j.todo || []
+  }
   await setState({ queue, idx: 0, processed: 0, errors: 0, total: queue.length, running: true, lastError: '' })
   // Apri/usa una tab Discogs per far girare il content script
   const tabs = await chrome.tabs.query({ url: 'https://www.discogs.com/*' })
@@ -51,11 +48,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     try {
       const s = await getState()
       switch (msg.type) {
-        case 'login':
-          await login(msg.server, msg.user, msg.pass)
+        case 'setAuth':
+          await setAuth(msg.server, msg.token)
           sendResponse({ ok: true }); break
         case 'start':
-          sendResponse(await start(msg.status)); break
+          sendResponse(await start(msg.status, msg.release_ids)); break
         case 'stop':
           await stop(); sendResponse({ ok: true }); break
         case 'status':
