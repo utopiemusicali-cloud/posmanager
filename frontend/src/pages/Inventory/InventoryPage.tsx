@@ -241,6 +241,8 @@ function InventoryTable({ status }: { status: string }) {
         myLocation={salesRow?.location}
         myExternalId={salesRow?.external_id}
         myComments={salesRow?.comments}
+        myListed={salesRow?.listed}
+        myAddDate={salesRow?.add_date}
         title={salesRow ? `${salesRow.artist} — ${salesRow.title}` : undefined}
         onClose={() => setSalesRow(null)}
       />

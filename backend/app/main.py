@@ -28,6 +28,10 @@ async def lifespan(app: FastAPI):
     # ── Startup ──────────────────────────────────────────────────────────────
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Migrazioni colonne nuove (idempotenti)
+        await conn.execute(text(
+            "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS add_date VARCHAR(30) NOT NULL DEFAULT ''"
+        ))
 
     # Crea admin se non esiste nessun utente
     async with AsyncSessionLocal() as db:

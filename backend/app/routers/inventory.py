@@ -70,6 +70,7 @@ def _item_to_dict(item: InventoryItem) -> dict:
         "location": item.location,
         "external_id": item.external_id,
         "comments": item.comments,
+        "add_date": item.add_date,
         "quantity": item.quantity,
         "status": item.status,
         "release_id": str(item.release_id) if item.release_id else "",
@@ -422,6 +423,7 @@ class AddInventoryItem(BaseModel):
     sleeve_condition: str = ""
     comments: str = ""
     external_id: str = ""
+    add_date: str = ""
     weight: int | None = None
     accept_offer: str = "N"
     country: str = ""
@@ -461,6 +463,7 @@ async def add_inventory_item(body: AddInventoryItem, db: AsyncSession = Depends(
         sleeve_condition=body.sleeve_condition,
         comments=body.comments,
         external_id=body.external_id,
+        add_date=body.add_date,
         weight=body.weight,
         accept_offer=body.accept_offer,
         quantity=1,

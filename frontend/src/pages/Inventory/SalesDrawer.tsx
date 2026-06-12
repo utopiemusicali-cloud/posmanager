@@ -44,6 +44,7 @@ interface Props {
   releaseId: string | null
   myMedia?: string; mySleeve?: string; myPrice?: number; myLocation?: string
   myExternalId?: string; myComments?: string
+  myListed?: string; myAddDate?: string
   title?: string
   onClose: () => void
 }
@@ -206,6 +207,9 @@ const GEO_AREAS: { key: 'IT' | 'EU' | 'XX'; emoji: string; label: string }[] = [
   { key: 'XX', emoji: '🌐', label: 'Extra UE' },
 ]
 
+// Spedizione economia per area (usata per calcolare il totale della tua copia)
+const MY_SHIPPING: Record<'IT' | 'EU' | 'XX', number> = { IT: 8.50, EU: 15, XX: 40 }
+
 function MarketGroups({ listings, myMedia, mySleeve, myPrice, myComments }: {
   listings: Listing[]
   myMedia?: string; mySleeve?: string; myPrice?: number; myComments?: string
@@ -216,40 +220,48 @@ function MarketGroups({ listings, myMedia, mySleeve, myPrice, myComments }: {
     return g
   }, [listings])
 
-  const myRow: MarketRow | undefined = myPrice != null ? {
-    seller: 'La tua copia', ship_from: 'Italy',
-    media: myMedia || '', sleeve: mySleeve || '',
-    comments: myComments || '',
-    price: myPrice, shipping: null, total: myPrice,
-    currency: 'EUR', feedback_pct: '', feedback_count: null,
-    _isMine: true,
-  } : undefined
+  // Crea la riga "La tua copia" con la spedizione corretta per area
+  const buildMyRow = (areaKey: 'IT' | 'EU' | 'XX'): MarketRow | undefined => {
+    if (myPrice == null) return undefined
+    const sh = MY_SHIPPING[areaKey]
+    return {
+      seller: 'La tua copia', ship_from: 'Italy',
+      media: myMedia || '', sleeve: mySleeve || '',
+      comments: myComments || '',
+      price: myPrice, shipping: sh, total: myPrice + sh,
+      currency: 'EUR', feedback_pct: '', feedback_count: null,
+      _isMine: true,
+    }
+  }
 
-  // Inserisce la tua copia nella posizione corretta in base al prezzo
-  const buildRows = (raw: Listing[]): MarketRow[] => {
+  // Inserisce la tua copia nella posizione corretta in base al totale
+  const buildRows = (raw: Listing[], areaKey: 'IT' | 'EU' | 'XX'): MarketRow[] => {
     const sorted: MarketRow[] = [...raw].sort((a, b) => effPrice(a) - effPrice(b))
-    if (!myRow || myPrice == null) return sorted
-    const insertAt = sorted.findIndex(l => effPrice(l) > myPrice)
+    const myRow = buildMyRow(areaKey)
+    if (!myRow) return sorted
+    const myTotal = myRow.total!
+    const insertAt = sorted.findIndex(l => effPrice(l) > myTotal)
     const result = [...sorted]
-    if (insertAt === -1) result.push({ ...myRow })
-    else result.splice(insertAt, 0, { ...myRow })
+    if (insertAt === -1) result.push(myRow)
+    else result.splice(insertAt, 0, myRow)
     return result
   }
 
-  // Posizione tra le copie a parità di condizioni media/sleeve
-  const calcPos = (raw: Listing[]) => {
+  // Posizione tra le copie a parità di condizioni media/sleeve (confronto su totale con spedizione area)
+  const calcPos = (raw: Listing[], areaKey: 'IT' | 'EU' | 'XX') => {
     if (myPrice == null || !myMedia) return null
+    const myTotal = myPrice + MY_SHIPPING[areaKey]
     const sameC = raw.filter(l => l.media === myMedia && (!mySleeve || l.sleeve === mySleeve))
     if (!sameC.length) return null
-    const rank = sameC.filter(l => effPrice(l) < myPrice).length + 1
+    const rank = sameC.filter(l => effPrice(l) < myTotal).length + 1
     return { rank, total: sameC.length }
   }
 
   const collapseItems = GEO_AREAS.map(({ key, emoji, label }) => {
     const raw = grouped[key]
-    const rows = buildRows(raw)
+    const rows = buildRows(raw, key)
     const realCount = raw.length
-    const pos = calcPos(raw)
+    const pos = calcPos(raw, key)
     const minReal = rows.find(r => !r._isMine)
 
     const posTag = pos ? (
@@ -302,7 +314,7 @@ function MarketGroups({ listings, myMedia, mySleeve, myPrice, myComments }: {
 // ── Main Drawer ───────────────────────────────────────────────────────────────
 export default function SalesDrawer({
   releaseId, myMedia, mySleeve, myPrice, myLocation,
-  myExternalId, myComments, title, onClose,
+  myExternalId, myComments, myListed, myAddDate, title, onClose,
 }: Props) {
   const qc = useQueryClient()
   const [scraping, setScraping] = useState(false)
@@ -353,8 +365,16 @@ export default function SalesDrawer({
     { key: 'm', label: 'Media', children: myMedia || '—' },
     { key: 's', label: 'Sleeve', children: mySleeve || '—' },
     { key: 'l', label: 'Location', children: myLocation || '—' },
+    {
+      key: 'sh', label: 'Spedizione',
+      children: <span style={{ fontSize: 12 }}>
+        🇮🇹 €8.50/€10 &nbsp;·&nbsp; 🌍 €15/€20 &nbsp;·&nbsp; 🌐 €40
+      </span>,
+    },
     ...(myExternalId ? [{ key: 'e', label: 'ID (privato)', children: <Text type="secondary" style={{ fontSize: 11 }}>{myExternalId}</Text> }] : []),
     ...(myComments ? [{ key: 'c', label: 'Note', children: <Text style={{ fontSize: 12 }}>{myComments}</Text> }] : []),
+    ...(myAddDate ? [{ key: 'ad', label: 'Add date', children: <Text style={{ fontSize: 12 }}>{myAddDate}</Text> }] : []),
+    ...(myListed ? [{ key: 'li', label: 'Listed', children: <Text type="secondary" style={{ fontSize: 12 }}>{myListed}</Text> }] : []),
   ]
 
   return (

@@ -40,6 +40,8 @@ class InventoryItem(Base):
     genere: Mapped[str] = mapped_column(String(255), default="")
     stile: Mapped[str] = mapped_column(String(255), default="")
 
+    add_date: Mapped[str] = mapped_column(String(30), default="")
+
     costo_unitario: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
     url_discogs: Mapped[str] = mapped_column(String(500), default="")
 
