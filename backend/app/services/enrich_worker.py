@@ -74,21 +74,26 @@ async def run_enrich(unique_ids: list[str]) -> None:
             if read_state().get("stop"):
                 break
             chunk, todo = todo[:_BATCH], todo[_BATCH:]
-            try:
-                metas = await fetch_release_meta(settings.DISCOGS_TOKEN, chunk)
-                async with AsyncSessionLocal() as db:
-                    for m in metas:
-                        await db.merge(ReleaseMeta(**m))
-                    await db.commit()
-            except Exception as e:
-                cur = read_state(); cur["error"] = str(e)[:300]; write_state(cur)
-                await asyncio.sleep(5)
-                continue
+            retries = 0
+            while retries < 3:
+                try:
+                    metas = await fetch_release_meta(settings.DISCOGS_TOKEN, chunk)
+                    async with AsyncSessionLocal() as db:
+                        for m in metas:
+                            await db.merge(ReleaseMeta(**m))
+                        await db.commit()
+                    break  # batch riuscito
+                except Exception as e:
+                    cur = read_state(); cur["error"] = str(e)[:300]; write_state(cur)
+                    retries += 1
+                    wait = 15 * retries  # 15s, 30s, 45s
+                    await asyncio.sleep(wait)
             cur = read_state()
-            cur["processed"] = cur.get("processed", 0) + len(metas)
+            cur["processed"] = cur.get("processed", 0) + len(chunk)
             cur["remaining"] = len(todo)
             cur["heartbeat"] = time.time()
             write_state(cur)
+            await asyncio.sleep(10)  # ~60 release/min → rispetta rate limit Discogs
     except Exception as e:
         cur = read_state(); cur["error"] = str(e)[:300]; write_state(cur)
     finally:
