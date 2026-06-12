@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Table, Input, Tabs, Tag, Button, message, Alert, Select, Progress, Tooltip } from 'antd'
 import type { ColumnType } from 'antd/es/table'
@@ -295,15 +295,17 @@ export default function InventoryPage() {
     } catch { return null }
   }
 
+  const prevEnrichRunning = useRef<boolean | null>(null)
   useEffect(() => {
     fetchEnrichStatus()
     const id = setInterval(async () => {
       const s = await fetchEnrichStatus()
-      if (s && !s.running) {
-        // aggiorna i dati quando finisce
+      // invalida solo quando transiziona da running → stopped
+      if (s && prevEnrichRunning.current === true && !s.running) {
         qc.invalidateQueries({ queryKey: ['inventory'] })
         qc.invalidateQueries({ queryKey: ['inv-facets'] })
       }
+      prevEnrichRunning.current = s?.running ?? false
     }, 5000)
     return () => clearInterval(id)
   }, [])
