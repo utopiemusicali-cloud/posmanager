@@ -29,9 +29,14 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         # Migrazioni colonne nuove (idempotenti)
-        await conn.execute(text(
-            "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS add_date VARCHAR(30) NOT NULL DEFAULT ''"
-        ))
+        col_exists = (await conn.execute(text(
+            "SELECT COUNT(*) FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'inventory_items' AND COLUMN_NAME = 'add_date'"
+        ))).scalar()
+        if not col_exists:
+            await conn.execute(text(
+                "ALTER TABLE inventory_items ADD COLUMN add_date VARCHAR(30) NOT NULL DEFAULT ''"
+            ))
 
     # Crea admin se non esiste nessun utente
     async with AsyncSessionLocal() as db:
