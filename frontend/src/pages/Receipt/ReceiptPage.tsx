@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import {
-  Table, Input, Button, Radio, InputNumber, AutoComplete,
+  Table, Input, Button, InputNumber, AutoComplete,
   Row, Col, Card, Tag, Space, Divider, message, Popconfirm,
-  Typography, Tooltip,
+  Typography, Tooltip, Select,
 } from 'antd'
 import type { InputRef } from 'antd'
 import type { ColumnType } from 'antd/es/table'
@@ -42,11 +42,23 @@ interface CartItem {
   title: string
   catno: string
   format: string
-  price: number        // prezzo base
-  qn: boolean          // applica sconto
+  price: number
+  qn: boolean
+}
+
+interface PaymentSplit {
+  metodo: string
+  importo: number
 }
 
 interface Customer { id: number; nome: string; tel: string | null; mail: string | null }
+
+const METODI = ['Contanti', 'SumUp', 'PayPal']
+const METODO_EMOJI: Record<string, string> = {
+  Contanti: '💵',
+  SumUp: '💳',
+  PayPal: '🅿️',
+}
 
 // ── API calls ─────────────────────────────────────────────────────────────────
 
@@ -84,6 +96,126 @@ function calcTotals(cart: CartItem[], pct: number, bonus: number) {
   const total = sub - disc
   const totalPaid = Math.max(0, total - bonus)
   return { sub, disc, total, totalPaid, dItems: cart.filter(i => i.qn).length }
+}
+
+// ── Sezione Split Pagamento ────────────────────────────────────────────────────
+
+function SplitPaymentSection({
+  payments,
+  onChange,
+  totalPaid,
+}: {
+  payments: PaymentSplit[]
+  onChange: (p: PaymentSplit[]) => void
+  totalPaid: number
+}) {
+  const allocated = payments.reduce((s, p) => s + (p.importo || 0), 0)
+  const missing = Math.round((totalPaid - allocated) * 100) / 100
+  const ok = Math.abs(missing) < 0.01
+
+  function setMetodo(idx: number, metodo: string) {
+    onChange(payments.map((p, i) => i === idx ? { ...p, metodo } : p))
+  }
+  function setImporto(idx: number, importo: number) {
+    onChange(payments.map((p, i) => i === idx ? { ...p, importo } : p))
+  }
+  function remove(idx: number) {
+    onChange(payments.filter((_, i) => i !== idx))
+  }
+  function add() {
+    const nextMetodo = METODI.find(m => !payments.some(p => p.metodo === m)) ?? METODI[0]
+    const nextImporto = Math.max(0, Math.round(missing * 100) / 100)
+    onChange([...payments, { metodo: nextMetodo, importo: nextImporto }])
+  }
+
+  // Quick-select: imposta un singolo pagamento con l'intero importo
+  function quickSet(metodo: string) {
+    onChange([{ metodo, importo: Math.round(totalPaid * 100) / 100 }])
+  }
+
+  return (
+    <div>
+      <Text strong>Pagamento:</Text>
+
+      {/* Quick select (singolo metodo) */}
+      <div style={{ display: 'flex', gap: 6, marginTop: 6, marginBottom: 8 }}>
+        {METODI.map(m => {
+          const active = payments.length === 1 && payments[0].metodo === m
+          return (
+            <Button
+              key={m}
+              size="small"
+              type={active ? 'primary' : 'default'}
+              onClick={() => quickSet(m)}
+            >
+              {METODO_EMOJI[m]} {m}
+            </Button>
+          )
+        })}
+      </div>
+
+      {/* Righe split */}
+      {payments.map((p, idx) => (
+        <div key={idx} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center' }}>
+          <Select
+            value={p.metodo}
+            onChange={v => setMetodo(idx, v)}
+            style={{ width: 120 }}
+            options={METODI.map(m => ({ value: m, label: `${METODO_EMOJI[m]} ${m}` }))}
+            size="small"
+          />
+          <InputNumber
+            value={p.importo}
+            onChange={v => setImporto(idx, Number(v ?? 0))}
+            min={0}
+            step={0.5}
+            precision={2}
+            prefix="€"
+            size="small"
+            style={{ flex: 1 }}
+          />
+          {payments.length > 1 && (
+            <Button
+              size="small"
+              danger
+              type="text"
+              icon={<DeleteOutlined />}
+              onClick={() => remove(idx)}
+            />
+          )}
+        </div>
+      ))}
+
+      {/* Aggiungi metodo */}
+      <Button
+        size="small"
+        type="dashed"
+        icon={<PlusOutlined />}
+        onClick={add}
+        style={{ width: '100%', marginBottom: 6 }}
+      >
+        Aggiungi metodo
+      </Button>
+
+      {/* Stato allocazione */}
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        background: ok ? '#f6ffed' : '#fff1f0',
+        border: `1px solid ${ok ? '#b7eb8f' : '#ffa39e'}`,
+        borderRadius: 4, padding: '4px 8px', fontSize: 12,
+      }}>
+        <Text style={{ fontSize: 12 }}>
+          Allocato: <b>€ {allocated.toFixed(2)}</b> / € {totalPaid.toFixed(2)}
+        </Text>
+        {ok
+          ? <Text style={{ color: '#52c41a', fontSize: 12 }}>✓ Completo</Text>
+          : <Text style={{ color: '#f5222d', fontSize: 12 }}>
+              {missing > 0 ? `Mancante: € ${missing.toFixed(2)}` : `Eccesso: € ${Math.abs(missing).toFixed(2)}`}
+            </Text>
+        }
+      </div>
+    </div>
+  )
 }
 
 // ── Colonne inventario ─────────────────────────────────────────────────────────
@@ -142,16 +274,14 @@ function cartColumns(
 // ── Componente principale ─────────────────────────────────────────────────────
 
 export default function ReceiptPage() {
-  // Carrello e impostazioni
   const [cart, setCart] = useState<CartItem[]>([])
   const [pct, setPct] = useState(0)
   const [bonus, setBonus] = useState(0)
-  const [payment, setPayment] = useState<string>('')
+  const [payments, setPayments] = useState<PaymentSplit[]>([{ metodo: 'Contanti', importo: 0 }])
   const [cliente, setCliente] = useState('')
   const [customerId, setCustomerId] = useState<number | null>(null)
   const [customerOptions, setCustomerOptions] = useState<{value:string;label:string;id:number}[]>([])
 
-  // Ricerca inventario
   const [invSearch, setInvSearch] = useState('')
   const [barcode, setBarcode] = useState('')
   const barcodeRef = useRef<InputRef>(null)
@@ -171,17 +301,29 @@ export default function ReceiptPage() {
     mutationFn: saveReceipt,
     onSuccess: () => {
       message.success('Ricevuta salvata!')
-      setCart([]); setPct(0); setBonus(0); setPayment(''); setCliente(''); setCustomerId(null)
+      setCart([])
+      setPct(0)
+      setBonus(0)
+      setPayments([{ metodo: 'Contanti', importo: 0 }])
+      setCliente('')
+      setCustomerId(null)
     },
     onError: () => message.error('Errore durante il salvataggio'),
   })
 
-  // Focus barcode all'avvio
   useEffect(() => { barcodeRef.current?.focus() }, [])
 
   const { sub, disc, total, totalPaid, dItems } = calcTotals(cart, pct, bonus)
 
-  // ── Aggiungi al carrello ──────────────────────────────────────────────────
+  // Aggiorna l'importo del singolo metodo quando cambia il totale (single-payment)
+  useEffect(() => {
+    if (payments.length === 1) {
+      setPayments([{ ...payments[0], importo: Math.round(totalPaid * 100) / 100 }])
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [totalPaid])
+
+  // ── Carrello ─────────────────────────────────────────────────────────────────
 
   function addToCart(item: InvItem) {
     const price = parsePrice(item.price)
@@ -203,14 +345,11 @@ export default function ReceiptPage() {
   function addByBarcode() {
     const code = barcode.trim()
     if (!code) return
-    const found = invItems.find(
-      i => i.listing_id === code || i.external_id === code
-    )
+    const found = invItems.find(i => i.listing_id === code || i.external_id === code)
     if (found) {
       addToCart(found)
       setBarcode('')
     } else {
-      // Cerca in tutto l'inventario se non già caricato
       client.get('/api/v1/inventory', {
         params: { status: 'For Sale', q: code, page: 1, page_size: 5 },
       }).then(r => {
@@ -230,7 +369,7 @@ export default function ReceiptPage() {
     setCart(c => c.filter(i => i._key !== key))
   }
 
-  // ── Ricerca cliente ─────────────────────────────────────────────────────────
+  // ── Cliente ───────────────────────────────────────────────────────────────────
 
   const handleCustomerSearch = async (q: string) => {
     setCliente(q)
@@ -240,16 +379,21 @@ export default function ReceiptPage() {
     setCustomerOptions(res.map(c => ({ value: c.nome, label: `${c.nome}${c.tel ? ' · ' + c.tel : ''}`, id: c.id })))
   }
 
-  // ── Salva ricevuta ──────────────────────────────────────────────────────────
+  // ── Salva ─────────────────────────────────────────────────────────────────────
 
   function handleSave() {
     if (cart.length === 0) { message.warning('Carrello vuoto'); return }
-    if (!payment) { message.warning('Seleziona il metodo di pagamento'); return }
+    if (payments.length === 0) { message.warning('Seleziona il metodo di pagamento'); return }
+
+    const allocated = payments.reduce((s, p) => s + (p.importo || 0), 0)
+    if (Math.abs(allocated - totalPaid) > 0.01) {
+      message.warning(`Importo allocato (€ ${allocated.toFixed(2)}) ≠ totale (€ ${totalPaid.toFixed(2)})`)
+      return
+    }
     if (!cliente.trim()) { message.warning('Inserisci il nome del cliente'); return }
 
-    const now = dayjs().toISOString()
     saveMut.mutate({
-      receipt_ts: now,
+      receipt_ts: dayjs().toISOString(),
       numero_ricevuta: String(nextNum ?? ''),
       discount: disc.toFixed(2),
       bonus: bonus.toFixed(2),
@@ -257,14 +401,14 @@ export default function ReceiptPage() {
       cliente: cliente.trim(),
       items: cart.length,
       d_items: dItems,
-      metodo_pagamento: payment,
       customer_id: customerId,
+      payments: payments.map(p => ({ metodo: p.metodo, importo: p.importo.toFixed(2) })),
     })
   }
 
   const columns = cartColumns(pct, toggleQn, removeItem)
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
     <div>
@@ -278,7 +422,6 @@ export default function ReceiptPage() {
         {/* ── Pannello sinistro: Inventario ── */}
         <Col span={14} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
 
-          {/* Barcode scanner */}
           <Card size="small" style={{ flexShrink: 0 }}>
             <Space.Compact style={{ width: '100%' }}>
               <Input
@@ -296,7 +439,6 @@ export default function ReceiptPage() {
             </Space.Compact>
           </Card>
 
-          {/* Ricerca inventario */}
           <Card size="small" style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <Input
               prefix={<SearchOutlined />}
@@ -332,7 +474,6 @@ export default function ReceiptPage() {
         {/* ── Pannello destro: Carrello + pagamento ── */}
         <Col span={10} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
 
-          {/* Carrello */}
           <Card
             size="small"
             title={<Space><span>🛒 Carrello</span><Tag>{cart.length} articoli</Tag></Space>}
@@ -382,6 +523,7 @@ export default function ReceiptPage() {
 
           {/* Cliente + pagamento + totali */}
           <Card size="small" style={{ flexShrink: 0 }}>
+
             {/* Cliente */}
             <div style={{ marginBottom: 8 }}>
               <Text strong><UserOutlined /> Cliente:</Text>
@@ -398,22 +540,8 @@ export default function ReceiptPage() {
 
             <Divider style={{ margin: '8px 0' }} />
 
-            {/* Pagamento */}
-            <div style={{ marginBottom: 8 }}>
-              <Text strong>Pagamento:</Text>
-              <div style={{ marginTop: 4 }}>
-                <Radio.Group value={payment} onChange={e => setPayment(e.target.value)}>
-                  <Radio.Button value="SumUp">💳 SumUp</Radio.Button>
-                  <Radio.Button value="Contanti">💵 Contanti</Radio.Button>
-                  <Radio.Button value="PayPal">🅿️ PayPal</Radio.Button>
-                </Radio.Group>
-              </div>
-            </div>
-
-            <Divider style={{ margin: '8px 0' }} />
-
             {/* Totali */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '4px 12px', alignItems: 'center' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '4px 12px', alignItems: 'center', marginBottom: 8 }}>
               <Text type="secondary">Subtotale:</Text>
               <Text style={{ textAlign: 'right' }}>€ {sub.toFixed(2)}</Text>
 
@@ -435,11 +563,20 @@ export default function ReceiptPage() {
                 size="small"
               />
 
-              <Text strong style={{ fontSize: 16 }}>TOTALE PAGATO:</Text>
+              <Text strong style={{ fontSize: 16 }}>TOTALE:</Text>
               <Text strong style={{ fontSize: 20, textAlign: 'right', color: '#27ae60' }}>
                 € {totalPaid.toFixed(2)}
               </Text>
             </div>
+
+            <Divider style={{ margin: '8px 0' }} />
+
+            {/* Split pagamento */}
+            <SplitPaymentSection
+              payments={payments}
+              onChange={setPayments}
+              totalPaid={totalPaid}
+            />
 
             <Divider style={{ margin: '8px 0' }} />
 

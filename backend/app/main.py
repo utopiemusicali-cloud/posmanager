@@ -38,6 +38,35 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE inventory_items ADD COLUMN add_date VARCHAR(30) NOT NULL DEFAULT ''"
             ))
 
+        # Corrispettivi su daily_closures
+        for col_def in [
+            ("totale_corrispettivi", "DECIMAL(10,2) NULL"),
+            ("n_ricevute", "INT NULL"),
+            ("canali_json", "TEXT NULL"),
+            ("iva_json", "TEXT NULL"),
+            ("numero_rt", "VARCHAR(64) NULL"),
+        ]:
+            exists = (await conn.execute(text(
+                "SELECT COUNT(*) FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'daily_closures' "
+                f"AND COLUMN_NAME = '{col_def[0]}'"
+            ))).scalar()
+            if not exists:
+                await conn.execute(text(
+                    f"ALTER TABLE daily_closures ADD COLUMN {col_def[0]} {col_def[1]}"
+                ))
+
+        # metodo_pagamento su shop_receipts allargato a VARCHAR(128)
+        mp_size = (await conn.execute(text(
+            "SELECT CHARACTER_MAXIMUM_LENGTH FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'shop_receipts' "
+            "AND COLUMN_NAME = 'metodo_pagamento'"
+        ))).scalar()
+        if mp_size and int(mp_size) < 128:
+            await conn.execute(text(
+                "ALTER TABLE shop_receipts MODIFY COLUMN metodo_pagamento VARCHAR(128)"
+            ))
+
     # Crea admin se non esiste nessun utente
     async with AsyncSessionLocal() as db:
         count = (await db.execute(select(User))).scalars().first()

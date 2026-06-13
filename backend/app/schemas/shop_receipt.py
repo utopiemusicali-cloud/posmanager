@@ -6,6 +6,18 @@ from decimal import Decimal
 from pydantic import BaseModel, ConfigDict
 
 
+class PaymentSplit(BaseModel):
+    metodo: str
+    importo: Decimal
+
+
+class PaymentSplitRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    metodo: str
+    importo: Decimal
+
+
 class ReceiptCreate(BaseModel):
     receipt_ts: datetime
     total_paid: Decimal
@@ -15,9 +27,10 @@ class ReceiptCreate(BaseModel):
     cliente: str | None = None
     items: int = 0
     d_items: int = 0
-    metodo_pagamento: str | None = None
+    metodo_pagamento: str | None = None  # derivato automaticamente se payments è fornito
     file_origine: str | None = None
     customer_id: int | None = None
+    payments: list[PaymentSplit] = []
 
 
 class ReceiptRead(BaseModel):
@@ -35,6 +48,7 @@ class ReceiptRead(BaseModel):
     metodo_pagamento: str | None
     customer_id: int | None
     created_at: datetime
+    payments: list[PaymentSplitRead] = []
 
 
 class NextReceiptNumber(BaseModel):

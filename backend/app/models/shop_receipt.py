@@ -11,6 +11,7 @@ from app.models.base import Base
 
 if TYPE_CHECKING:
     from app.models.customer import Customer
+    from app.models.receipt_payment import ReceiptPayment
 
 
 class ShopReceipt(Base):
@@ -25,9 +26,14 @@ class ShopReceipt(Base):
     cliente: Mapped[str | None] = mapped_column(String(255))
     items: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     d_items: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    metodo_pagamento: Mapped[str | None] = mapped_column(String(64))
+    metodo_pagamento: Mapped[str | None] = mapped_column(String(128))
     file_origine: Mapped[str | None] = mapped_column(String(512))
     customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
     customer: Mapped[Customer | None] = relationship("Customer", back_populates="receipts")
+    payments: Mapped[list[ReceiptPayment]] = relationship(
+        "ReceiptPayment", back_populates="receipt",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
