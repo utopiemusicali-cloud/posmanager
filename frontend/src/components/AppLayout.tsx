@@ -9,6 +9,7 @@ import {
   ShoppingCartOutlined,
   LogoutOutlined,
   UserOutlined,
+  SettingOutlined,
 } from '@ant-design/icons'
 import { useAuthStore } from '@/store/auth'
 
@@ -34,6 +35,7 @@ const menuItems = [
       { key: '/receipt', icon: <FileTextOutlined />, label: 'Nuova Ricevuta' },
       { key: '/customers', icon: <TeamOutlined />, label: 'Rubrica Clienti' },
       { key: '/cost-centers', icon: <FundOutlined />, label: 'Centro Costi' },
+      { key: '/settings', icon: <SettingOutlined />, label: 'Impostazioni' },
     ],
   },
 ]

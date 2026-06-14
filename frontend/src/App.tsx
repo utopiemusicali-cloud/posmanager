@@ -8,6 +8,7 @@ import CustomersPage from '@/pages/Customers/CustomersPage'
 import InventoryPage from '@/pages/Inventory/InventoryPage'
 import CostCentersPage from '@/pages/CostCenters/CostCentersPage'
 import DiscogsOrdersPage from '@/pages/DiscogsOrders/DiscogsOrdersPage'
+import SettingsPage from '@/pages/Settings/SettingsPage'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.token)
@@ -34,6 +35,7 @@ export default function App() {
           <Route path="inventory" element={<InventoryPage />} />
           <Route path="cost-centers" element={<CostCentersPage />} />
           <Route path="discogs-orders" element={<DiscogsOrdersPage />} />
+          <Route path="settings" element={<SettingsPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -13,7 +14,9 @@ from app.database import get_db
 from app.models.daily_closure import DailyClosure
 from app.models.receipt_payment import ReceiptPayment
 from app.models.shop_receipt import ShopReceipt
+from app.models.shop_settings import ShopSettings
 from app.schemas.daily_closure import ClosureCreate, ClosurePreview, ClosureRead
+from app.services.entratel import ShopInfo, generate as entratel_generate
 
 router = APIRouter(
     prefix="/api/v1/closures",
@@ -88,6 +91,72 @@ async def list_closures(
         await db.execute(q.order_by(DailyClosure.closure_ts.desc()).limit(limit))
     ).scalars().all()
     return rows
+
+
+@router.get("/export/entratel")
+async def export_entratel(
+    anno: int = Query(..., ge=2020, le=2099, description="Anno d'imposta"),
+    mese: int = Query(..., ge=1, le=12, description="Mese (1-12)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Genera il file corrispettivi in formato Entratel AdE (Prov. 12/03/2009).
+    Restituisce un file .txt a larghezza fissa (1800 char/record, encoding latin-1).
+    """
+    settings = (await db.execute(select(ShopSettings).limit(1))).scalar_one_or_none()
+    if not settings or not settings.codice_fiscale:
+        raise HTTPException(
+            status_code=422,
+            detail="Configura prima i dati del negozio (Impostazioni → Dati Fiscali).",
+        )
+
+    # Costruisci dizionario giornaliero dalle closures del mese
+    primo = datetime(anno, mese, 1, 0, 0, 0)
+    import calendar as _cal
+    ultimo_giorno = _cal.monthrange(anno, mese)[1]
+    ultimo = datetime(anno, mese, ultimo_giorno, 23, 59, 59)
+
+    closures = (await db.execute(
+        select(DailyClosure)
+        .where(DailyClosure.closure_ts >= primo, DailyClosure.closure_ts <= ultimo)
+        .order_by(DailyClosure.closure_ts)
+    )).scalars().all()
+
+    daily: dict[date, dict[str, float]] = {}
+    for c in closures:
+        d = c.closure_ts.date()
+        if c.iva_json:
+            try:
+                iva_list: list[dict] = json.loads(c.iva_json)
+                day_iva: dict[str, float] = {}
+                for entry in iva_list:
+                    code = entry.get("aliquota", "RP")
+                    lordo = float(entry.get("lordo", 0))
+                    day_iva[code] = day_iva.get(code, 0.0) + lordo
+                daily[d] = day_iva
+            except Exception:
+                pass
+        elif c.totale_corrispettivi is not None:
+            # Nessun dettaglio IVA → tutto RP (regime del margine)
+            aliquota = "RP" if settings.regime_fiscale == "margine" else "22"
+            daily[d] = {aliquota: float(c.totale_corrispettivi)}
+
+    shop = ShopInfo(
+        ragione_sociale=settings.ragione_sociale,
+        codice_fiscale=settings.codice_fiscale,
+        numero_rea=settings.numero_rea or "",
+        indirizzo=settings.indirizzo,
+        comune=settings.citta,
+        provincia=settings.provincia,
+    )
+
+    content = entratel_generate(shop, anno, mese, daily)
+    filename = f"corrispettivi_{anno}_{mese:02d}.txt"
+    return Response(
+        content=content,
+        media_type="text/plain; charset=latin-1",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("", response_model=ClosureRead, status_code=status.HTTP_201_CREATED)

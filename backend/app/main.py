@@ -20,6 +20,7 @@ from app.routers.integrations import router as integrations_router
 from app.routers.inventory import router as inventory_router
 from app.routers.receipts import router as receipts_router
 from app.routers.sessions import router as sessions_router
+from app.routers.settings import router as settings_router
 from app.routers.transactions import router as transactions_router
 
 
@@ -66,6 +67,20 @@ async def lifespan(app: FastAPI):
             await conn.execute(text(
                 "ALTER TABLE shop_receipts MODIFY COLUMN metodo_pagamento VARCHAR(128)"
             ))
+
+        # Colonne shop_settings: note_piede (aggiunta dopo la creazione iniziale)
+        for col_def in [
+            ("note_piede", "VARCHAR(255) NULL"),
+        ]:
+            exists = (await conn.execute(text(
+                "SELECT COUNT(*) FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'shop_settings' "
+                f"AND COLUMN_NAME = '{col_def[0]}'"
+            ))).scalar()
+            if not exists:
+                await conn.execute(text(
+                    f"ALTER TABLE shop_settings ADD COLUMN {col_def[0]} {col_def[1]}"
+                ))
 
     # Crea admin se non esiste nessun utente
     async with AsyncSessionLocal() as db:
@@ -114,6 +129,7 @@ app.include_router(cost_centers_router)
 app.include_router(customers_router)
 app.include_router(inventory_router)
 app.include_router(integrations_router)
+app.include_router(settings_router)
 
 
 @app.get("/api/v1/health")

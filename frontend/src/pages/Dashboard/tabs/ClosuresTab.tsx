@@ -2,9 +2,9 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Table, Tag, Tooltip, Typography, Button, Modal, Form,
-  InputNumber, Input, DatePicker, Divider, Spin, Alert,
+  InputNumber, Input, DatePicker, Divider, Spin, Alert, Select, message,
 } from 'antd'
-import { PlusOutlined } from '@ant-design/icons'
+import { PlusOutlined, DownloadOutlined } from '@ant-design/icons'
 import dayjs, { type Dayjs } from 'dayjs'
 import client from '@/api/client'
 
@@ -185,6 +185,74 @@ function NuovaChiusuraModal({ open, onClose }: { open: boolean; onClose: () => v
   )
 }
 
+// ── Export Entratel ──────────────────────────────────────────────────────────
+
+function EntratelExportButton() {
+  const currentYear = dayjs().year()
+  const currentMonth = dayjs().month() + 1
+  const [anno, setAnno] = useState(currentYear)
+  const [mese, setMese] = useState(currentMonth)
+  const [loading, setLoading] = useState(false)
+
+  async function handleExport() {
+    setLoading(true)
+    try {
+      const res = await client.get('/api/v1/closures/export/entratel', {
+        params: { anno, mese },
+        responseType: 'blob',
+      })
+      const url = URL.createObjectURL(new Blob([res.data], { type: 'text/plain' }))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `corrispettivi_${anno}_${String(mese).padStart(2, '0')}.txt`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: Blob } }
+      if (err?.response?.data) {
+        const text = await err.response.data.text()
+        try {
+          const json = JSON.parse(text)
+          message.error(json.detail ?? 'Errore export')
+        } catch {
+          message.error('Errore export Entratel')
+        }
+      } else {
+        message.error('Errore export Entratel')
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const anni = [currentYear - 1, currentYear, currentYear + 1]
+  const mesi = [
+    'Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno',
+    'Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre',
+  ]
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <Select value={anno} onChange={setAnno} style={{ width: 90 }}>
+        {anni.map(a => <Select.Option key={a} value={a}>{a}</Select.Option>)}
+      </Select>
+      <Select value={mese} onChange={setMese} style={{ width: 120 }}>
+        {mesi.map((m, i) => (
+          <Select.Option key={i + 1} value={i + 1}>{m}</Select.Option>
+        ))}
+      </Select>
+      <Button
+        icon={<DownloadOutlined />}
+        loading={loading}
+        onClick={handleExport}
+        title="Scarica file corrispettivi per Entratel (AdE)"
+      >
+        Export Entratel
+      </Button>
+    </div>
+  )
+}
+
 // ── Tabella Chiusure ─────────────────────────────────────────────────────────
 
 export default function ClosuresTab() {
@@ -248,10 +316,11 @@ export default function ClosuresTab() {
 
   return (
     <div>
-      <div style={{ marginBottom: 12 }}>
+      <div style={{ marginBottom: 12, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
           Nuova Chiusura
         </Button>
+        <EntratelExportButton />
       </div>
 
       <Table

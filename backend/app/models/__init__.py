@@ -14,6 +14,7 @@ from app.models.inventory_item import InventoryItem
 from app.models.release_meta import ReleaseMeta
 from app.models.release_sales import ReleaseSales
 from app.models.receipt_payment import ReceiptPayment
+from app.models.shop_settings import ShopSettings
 
 __all__ = [
     "Base",
@@ -32,4 +33,5 @@ __all__ = [
     "ReleaseMeta",
     "ReleaseSales",
     "ReceiptPayment",
+    "ShopSettings",
 ]
