@@ -6,8 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user
 from app.auth.schemas import Token, UserRead
-from app.auth.service import authenticate_user, create_access_token
-from app.database import get_db
+from app.auth.service import authenticate_user, build_token_for_user
+from app.database import get_main_db
 from app.models.user import User
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 @router.post("/token", response_model=Token)
 async def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_main_db),
 ) -> Token:
     user = await authenticate_user(db, form_data.username, form_data.password)
     if not user:
@@ -25,7 +25,7 @@ async def login(
             detail="Username o password errati",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    token = create_access_token({"sub": user.username})
+    token = await build_token_for_user(db, user)
     return Token(access_token=token)
 
 

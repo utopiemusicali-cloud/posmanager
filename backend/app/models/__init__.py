@@ -1,6 +1,10 @@
-# Importa tutti i modelli per farli riconoscere da Alembic
+# Modelli DB principale (posmanager_main)
+from app.models.main_base import MainBase
 from app.models.base import Base, TimestampMixin
-from app.models.user import User
+from app.models.company import Company
+from app.models.user import User, UserRole
+
+# Modelli per DB aziendali (posmanager, posmanager_oblique, ...)
 from app.models.customer import Customer
 from app.models.shop_receipt import ShopReceipt
 from app.models.cash_movement import CashMovement
@@ -15,11 +19,17 @@ from app.models.release_meta import ReleaseMeta
 from app.models.release_sales import ReleaseSales
 from app.models.receipt_payment import ReceiptPayment
 from app.models.shop_settings import ShopSettings
+from app.models.company_settings import CompanySettings
 
 __all__ = [
+    "MainBase",
     "Base",
     "TimestampMixin",
+    # main DB
+    "Company",
     "User",
+    "UserRole",
+    # company DB
     "Customer",
     "ShopReceipt",
     "CashMovement",
@@ -34,4 +44,5 @@ __all__ = [
     "ReleaseSales",
     "ReceiptPayment",
     "ShopSettings",
+    "CompanySettings",
 ]
