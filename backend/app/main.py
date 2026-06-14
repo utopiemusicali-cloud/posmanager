@@ -25,6 +25,7 @@ from app.routers.receipts import router as receipts_router
 from app.routers.sessions import router as sessions_router
 from app.routers.settings import router as settings_router
 from app.routers.transactions import router as transactions_router
+from app.routers.users import router as users_router
 
 
 async def _ensure_main_db_exists() -> None:
@@ -271,6 +272,7 @@ app.include_router(customers_router)
 app.include_router(inventory_router)
 app.include_router(integrations_router)
 app.include_router(settings_router)
+app.include_router(users_router)
 
 
 @app.get("/api/v1/health")

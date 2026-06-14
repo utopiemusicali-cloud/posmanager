@@ -1,5 +1,5 @@
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
-import { Layout, Menu, Button, Typography, Space, Avatar } from 'antd'
+import { Layout, Menu, Button, Typography, Space, Avatar, Tag } from 'antd'
 import {
   DashboardOutlined,
   FileTextOutlined,
@@ -10,40 +10,46 @@ import {
   LogoutOutlined,
   UserOutlined,
   SettingOutlined,
+  UsergroupAddOutlined,
 } from '@ant-design/icons'
 import { useAuthStore } from '@/store/auth'
 
-const { Sider, Content, Header } = Layout
+const { Sider, Content } = Layout
 const { Text } = Typography
-
-const menuItems = [
-  {
-    key: 'discogs',
-    label: 'DISCOGS',
-    type: 'group' as const,
-    children: [
-      { key: '/inventory', icon: <InboxOutlined />, label: 'Inventario' },
-      { key: '/discogs-orders', icon: <ShoppingCartOutlined />, label: 'Ordini Discogs' },
-    ],
-  },
-  {
-    key: 'gestionale',
-    label: 'GESTIONALE',
-    type: 'group' as const,
-    children: [
-      { key: '/dashboard', icon: <DashboardOutlined />, label: 'Dashboard' },
-      { key: '/receipt', icon: <FileTextOutlined />, label: 'Nuova Ricevuta' },
-      { key: '/customers', icon: <TeamOutlined />, label: 'Rubrica Clienti' },
-      { key: '/cost-centers', icon: <FundOutlined />, label: 'Centro Costi' },
-      { key: '/settings', icon: <SettingOutlined />, label: 'Impostazioni' },
-    ],
-  },
-]
 
 export default function AppLayout() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { username, logout } = useAuthStore()
+  const { username, role, logout } = useAuthStore()
+
+  const isAdmin = role === 'admin' || role === 'superadmin'
+
+  const menuItems = [
+    {
+      key: 'discogs',
+      label: 'DISCOGS',
+      type: 'group' as const,
+      children: [
+        { key: '/inventory', icon: <InboxOutlined />, label: 'Inventario' },
+        { key: '/discogs-orders', icon: <ShoppingCartOutlined />, label: 'Ordini Discogs' },
+      ],
+    },
+    {
+      key: 'gestionale',
+      label: 'GESTIONALE',
+      type: 'group' as const,
+      children: [
+        { key: '/dashboard', icon: <DashboardOutlined />, label: 'Dashboard' },
+        { key: '/receipt', icon: <FileTextOutlined />, label: 'Nuova Ricevuta' },
+        { key: '/customers', icon: <TeamOutlined />, label: 'Rubrica Clienti' },
+        { key: '/cost-centers', icon: <FundOutlined />, label: 'Centro Costi' },
+        ...(isAdmin ? [
+          { key: '/users', icon: <UsergroupAddOutlined />, label: 'Utenti' },
+          { key: '/settings', icon: <SettingOutlined />, label: 'Impostazioni' },
+        ] : []),
+      ],
+    },
+  ]
 
   const handleLogout = () => {
     logout()
@@ -78,7 +84,10 @@ export default function AppLayout() {
           <Space direction="vertical" style={{ width: '100%' }}>
             <Space>
               <Avatar icon={<UserOutlined />} size="small" style={{ background: '#8e44ad' }} />
-              <Text style={{ color: '#bdc3c7', fontSize: 12 }}>{username}</Text>
+              <div>
+                <Text style={{ color: '#bdc3c7', fontSize: 12, display: 'block' }}>{username}</Text>
+                {role && <Tag color={role === 'admin' || role === 'superadmin' ? 'purple' : 'default'} style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>{role}</Tag>}
+              </div>
             </Space>
             <Button
               icon={<LogoutOutlined />}
