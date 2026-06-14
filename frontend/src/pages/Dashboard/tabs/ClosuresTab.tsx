@@ -206,7 +206,7 @@ function EntratelExportButton() {
       a.href = url
       a.download = `corrispettivi_${anno}_${String(mese).padStart(2, '0')}.txt`
       a.click()
-      URL.revokeObjectURL(url)
+      setTimeout(() => URL.revokeObjectURL(url), 100)
     } catch (e: unknown) {
       const err = e as { response?: { data?: Blob } }
       if (err?.response?.data) {

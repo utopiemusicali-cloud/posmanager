@@ -1,12 +1,12 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Table, Tag, Button } from 'antd'
+import { Table, Tag, Button, Modal, message } from 'antd'
 import { PrinterOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { getReceipts } from '@/api/endpoints/receipts'
 import client from '@/api/client'
 
-// ── Scontrino HTML ───────────────────────────────────────────────────────────
+// ── Tipi ────────────────────────────────────────────────────────────────────
 
 interface ShopSettings {
   ragione_sociale: string
@@ -44,114 +44,145 @@ const METODO_EMOJI: Record<string, string> = {
   PayPal: '🅿️',
 }
 
-function buildReceiptHtml(r: Receipt, shop: ShopSettings): string {
-  const lineWidth = 42
-  const sep = '─'.repeat(lineWidth)
-  const dashes = '- '.repeat(lineWidth / 2)
+// ── Scontrino ────────────────────────────────────────────────────────────────
 
-  const center = (s: string) => s.padStart(Math.floor((lineWidth + s.length) / 2)).padEnd(lineWidth)
+function escHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+function buildReceiptText(r: Receipt, shop: ShopSettings): string {
+  const W = 42
+  const sep = '─'.repeat(W)
+  const dashes = '- '.repeat(W / 2)
+  const center = (s: string) =>
+    s.padStart(Math.floor((W + s.length) / 2)).padEnd(W)
   const row = (label: string, value: string) =>
-    `${label}${value.padStart(lineWidth - label.length)}`
+    label + value.padStart(W - label.length)
 
   const lines: string[] = [
     center(shop.ragione_sociale),
-    center(`${shop.indirizzo}`),
+    center(shop.indirizzo),
     center(`${shop.cap} ${shop.citta} (${shop.provincia})`),
-    shop.telefono ? center(shop.telefono) : '',
+    ...(shop.telefono ? [center(shop.telefono)] : []),
     sep,
     center('R I C E V U T A'),
-    r.numero_ricevuta ? center(`N° ${r.numero_ricevuta}`) : '',
+    ...(r.numero_ricevuta ? [center(`N° ${r.numero_ricevuta}`)] : []),
     center(dayjs(r.receipt_ts).format('DD/MM/YYYY HH:mm')),
     sep,
+    ...(r.cliente ? [`Cliente: ${r.cliente}`] : []),
+    dashes,
+    ...(r.items > 0 ? [row('Articoli nuovi', `${r.items}`)] : []),
+    ...(r.d_items > 0 ? [row('Articoli usati', `${r.d_items}`)] : []),
+    ...(Number(r.discount) > 0 ? [row('Sconto', `-€ ${Number(r.discount).toFixed(2)}`)] : []),
+    ...(Number(r.bonus) > 0 ? [row('Bonus', `-€ ${Number(r.bonus).toFixed(2)}`)] : []),
+    sep,
+    row('TOTALE', `€ ${Number(r.total_paid).toFixed(2)}`),
+    sep,
+    ...(r.payments && r.payments.length > 0
+      ? [
+          'Pagamento:',
+          ...r.payments.map(
+            p => `  ${METODO_EMOJI[p.metodo] ?? '•'} ${p.metodo.padEnd(12)} € ${Number(p.importo).toFixed(2)}`
+          ),
+        ]
+      : r.metodo_pagamento
+        ? [`Pagamento: ${r.metodo_pagamento}`]
+        : []),
+    sep,
+    ...(shop.note_piede ? [center(shop.note_piede)] : []),
+    center('Grazie per il vostro acquisto!'),
+    sep,
   ]
+  return lines.join('\n')
+}
 
-  if (r.cliente) lines.push(`Cliente: ${r.cliente}`)
-
-  lines.push(dashes)
-  if (r.items > 0) lines.push(row(`Articoli nuovi`, `${r.items}`))
-  if (r.d_items > 0) lines.push(row(`Articoli usati`, `${r.d_items}`))
-
-  if (Number(r.discount) > 0)
-    lines.push(row(`Sconto`, `-€ ${Number(r.discount).toFixed(2)}`))
-  if (Number(r.bonus) > 0)
-    lines.push(row(`Bonus`, `-€ ${Number(r.bonus).toFixed(2)}`))
-
-  lines.push(sep)
-  lines.push(row('TOTALE', `€ ${Number(r.total_paid).toFixed(2)}`))
-  lines.push(sep)
-
-  // Pagamenti
-  if (r.payments && r.payments.length > 0) {
-    lines.push('Pagamento:')
-    for (const p of r.payments) {
-      const emoji = METODO_EMOJI[p.metodo] ?? '•'
-      lines.push(`  ${emoji} ${p.metodo.padEnd(12)} € ${Number(p.importo).toFixed(2)}`)
-    }
-  } else if (r.metodo_pagamento) {
-    lines.push(`Pagamento: ${r.metodo_pagamento}`)
-  }
-
-  lines.push(sep)
-  if (shop.note_piede) lines.push(center(shop.note_piede))
-  lines.push(center('Grazie per il vostro acquisto!'))
-  lines.push(sep)
-
-  const pre = lines.filter(l => l !== undefined).join('\n')
-
+function buildPrintHtml(r: Receipt, shop: ShopSettings): string {
+  const text = escHtml(buildReceiptText(r, shop))
   return `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>Ricevuta ${r.numero_ricevuta ?? r.id}</title>
+<html><head><meta charset="utf-8">
+<title>Ricevuta ${escHtml(r.numero_ricevuta ?? String(r.id))}</title>
 <style>
-  @media print {
-    body { margin: 0; }
-    @page { margin: 4mm; size: 80mm auto; }
-    .no-print { display: none; }
+  @media print { body{margin:0} @page{margin:4mm;size:80mm auto} }
+  body{font-family:'Courier New',monospace;font-size:12px;line-height:1.4;padding:8px;background:white;color:#111}
+  pre{font-family:inherit;font-size:inherit;white-space:pre;margin:0}
+  button{display:block;margin:12px auto;padding:8px 24px;background:#1677ff;color:white;border:none;border-radius:4px;cursor:pointer;font-size:14px}
+  @media print{button{display:none}}
+</style></head><body>
+<button onclick="window.print()">🖨️ Stampa</button>
+<pre>${text}</pre>
+</body></html>`
+}
+
+// ── Componente Modal stampa ──────────────────────────────────────────────────
+
+function PrintModal({
+  rec,
+  shop,
+  onClose,
+}: {
+  rec: Receipt | null
+  shop: ShopSettings
+  onClose: () => void
+}) {
+  if (!rec) return null
+
+  function handlePrint() {
+    const html = buildPrintHtml(rec!, shop)
+    const win = window.open('', '_blank')
+    if (win) {
+      win.document.write(html)
+      win.document.close()
+      win.focus()
+    } else {
+      message.warning(
+        'Popup bloccato da Chrome. Abilita i popup per questo sito per stampare.'
+      )
+    }
   }
-  body {
-    font-family: 'Courier New', Courier, monospace;
-    font-size: 12px;
-    line-height: 1.4;
-    background: white;
-    color: #111;
-    margin: 0;
-    padding: 8px;
-  }
-  pre {
-    font-family: inherit;
-    font-size: inherit;
-    white-space: pre;
-    margin: 0;
-  }
-  .btn-wrap {
-    text-align: center;
-    margin: 16px 0 8px;
-  }
-  button {
-    padding: 8px 24px;
-    font-size: 14px;
-    cursor: pointer;
-    background: #1677ff;
-    color: white;
-    border: none;
-    border-radius: 4px;
-  }
-</style>
-</head>
-<body>
-<div class="btn-wrap no-print">
-  <button onclick="window.print()">🖨️ Stampa</button>
-</div>
-<pre>${pre}</pre>
-</body>
-</html>`
+
+  const text = buildReceiptText(rec, shop)
+
+  return (
+    <Modal
+      title={`Ricevuta ${rec.numero_ricevuta ?? rec.id}`}
+      open
+      onCancel={onClose}
+      footer={
+        <Button type="primary" icon={<PrinterOutlined />} onClick={handlePrint}>
+          Stampa
+        </Button>
+      }
+      width={480}
+    >
+      <pre
+        style={{
+          fontFamily: "'Courier New', monospace",
+          fontSize: 12,
+          lineHeight: 1.4,
+          background: '#fafafa',
+          border: '1px solid #eee',
+          borderRadius: 4,
+          padding: '12px 16px',
+          overflowX: 'auto',
+          whiteSpace: 'pre',
+          color: '#111',
+          margin: 0,
+        }}
+      >
+        {text}
+      </pre>
+    </Modal>
+  )
 }
 
 // ── Tabella ricevute ─────────────────────────────────────────────────────────
 
 export default function ReceiptsTab() {
   const [page, setPage] = useState(1)
+  const [printRec, setPrintRec] = useState<Receipt | null>(null)
 
   const { data, isLoading } = useQuery({
     queryKey: ['receipts', page],
@@ -166,23 +197,15 @@ export default function ReceiptsTab() {
     },
   })
 
-  function handlePrint(rec: Receipt) {
-    const shop: ShopSettings = shopSettings ?? {
-      ragione_sociale: 'Il Mio Negozio',
-      indirizzo: '',
-      cap: '',
-      citta: '',
-      provincia: '',
-      telefono: null,
-      regime_fiscale: 'margine',
-      note_piede: null,
-    }
-    const html = buildReceiptHtml(rec, shop)
-    const win = window.open('', '_blank', 'width=400,height=600')
-    if (win) {
-      win.document.write(html)
-      win.document.close()
-    }
+  const defaultShop: ShopSettings = {
+    ragione_sociale: 'Il Mio Negozio',
+    indirizzo: '',
+    cap: '',
+    citta: '',
+    provincia: '',
+    telefono: null,
+    regime_fiscale: 'margine',
+    note_piede: null,
   }
 
   const columns = [
@@ -217,26 +240,34 @@ export default function ReceiptsTab() {
           size="small"
           type="text"
           title="Stampa ricevuta"
-          onClick={() => handlePrint(rec)}
+          onClick={() => setPrintRec(rec)}
         />
       ),
     },
   ]
 
   return (
-    <Table
-      dataSource={data?.items ?? []}
-      columns={columns}
-      rowKey="id"
-      loading={isLoading}
-      size="small"
-      pagination={{
-        current: page,
-        total: data?.total ?? 0,
-        pageSize: 50,
-        onChange: setPage,
-        showTotal: (t) => `${t} ricevute`,
-      }}
-    />
+    <>
+      <Table
+        dataSource={data?.items ?? []}
+        columns={columns}
+        rowKey="id"
+        loading={isLoading}
+        size="small"
+        pagination={{
+          current: page,
+          total: data?.total ?? 0,
+          pageSize: 50,
+          onChange: setPage,
+          showTotal: (t) => `${t} ricevute`,
+        }}
+      />
+
+      <PrintModal
+        rec={printRec}
+        shop={shopSettings ?? defaultShop}
+        onClose={() => setPrintRec(null)}
+      />
+    </>
   )
 }

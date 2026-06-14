@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import calendar
 import json
+import logging
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+
+logger = logging.getLogger(__name__)
 from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -112,8 +116,7 @@ async def export_entratel(
 
     # Costruisci dizionario giornaliero dalle closures del mese
     primo = datetime(anno, mese, 1, 0, 0, 0)
-    import calendar as _cal
-    ultimo_giorno = _cal.monthrange(anno, mese)[1]
+    ultimo_giorno = calendar.monthrange(anno, mese)[1]
     ultimo = datetime(anno, mese, ultimo_giorno, 23, 59, 59)
 
     closures = (await db.execute(
@@ -128,18 +131,18 @@ async def export_entratel(
         if c.iva_json:
             try:
                 iva_list: list[dict] = json.loads(c.iva_json)
-                day_iva: dict[str, float] = {}
+                day_acc = daily.setdefault(d, {})
                 for entry in iva_list:
                     code = entry.get("aliquota", "RP")
                     lordo = float(entry.get("lordo", 0))
-                    day_iva[code] = day_iva.get(code, 0.0) + lordo
-                daily[d] = day_iva
-            except Exception:
-                pass
+                    day_acc[code] = day_acc.get(code, 0.0) + lordo
+            except Exception as exc:
+                logger.warning("closure %s: iva_json malformato, giorno omesso — %s", c.id, exc)
         elif c.totale_corrispettivi is not None:
             # Nessun dettaglio IVA → tutto RP (regime del margine)
             aliquota = "RP" if settings.regime_fiscale == "margine" else "22"
-            daily[d] = {aliquota: float(c.totale_corrispettivi)}
+            day_acc = daily.setdefault(d, {})
+            day_acc[aliquota] = day_acc.get(aliquota, 0.0) + float(c.totale_corrispettivi)
 
     shop = ShopInfo(
         ragione_sociale=settings.ragione_sociale,

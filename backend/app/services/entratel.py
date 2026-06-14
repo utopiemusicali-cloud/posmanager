@@ -27,8 +27,11 @@ Verificare l'applicabilità con il proprio commercialista prima dell'invio via E
 from __future__ import annotations
 
 import calendar
+import logging
 from datetime import date
 from typing import NamedTuple
+
+logger = logging.getLogger(__name__)
 
 RECORD_LEN = 1800
 BLOCKS_PER_REC2 = 75
@@ -112,7 +115,9 @@ def _build_blocks(
         else:
             for aliquota, importo in day_data.items():
                 ade_code = ALIQUOTA_TO_ADE.get(aliquota, "RP")
-                euro_int = round(float(importo))
+                # abs(): importi negativi (rimborsi) non sono rappresentabili
+                # nel formato AdE (solo cifre). Si usa il valore assoluto.
+                euro_int = abs(round(float(importo)))
                 blocks.append(
                     d.strftime("%d%m%Y")
                     + _r(ade_code, 2)
