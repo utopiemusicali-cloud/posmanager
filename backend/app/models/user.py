@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import ClassVar
 
 from sqlalchemy import Boolean, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
@@ -29,4 +30,4 @@ class User(MainBase, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Attributo transitorio impostato da get_current_user (non mappato su DB)
-    _company_db: str | None = None
+    _company_db: ClassVar[str | None] = None
