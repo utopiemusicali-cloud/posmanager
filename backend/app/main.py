@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.auth.router import router as auth_router
@@ -193,9 +194,14 @@ async def _seed_main_db() -> None:
         )
         main_db.add(viewer)
 
-        await main_db.commit()
-        print(f"[startup] Azienda '{company.name}' creata (db: {company.db_name}), "
-              f"{len(old_users)} utenti migrati.")
+        try:
+            await main_db.commit()
+            print(f"[startup] Azienda '{company.name}' creata (db: {company.db_name}), "
+                  f"{len(old_users)} utenti migrati.")
+        except IntegrityError:
+            # Un altro worker ha già fatto il seed in parallelo — nessun problema
+            await main_db.rollback()
+            return
 
     # 4. Crea company_settings_integrations nel DB aziendale se vuota
     async with AsyncSessionLocal() as comp_db:
