@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String
+from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -29,7 +29,7 @@ class ShopReceipt(Base):
     metodo_pagamento: Mapped[str | None] = mapped_column(String(128))
     file_origine: Mapped[str | None] = mapped_column(String(512))
     customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
 
     customer: Mapped[Customer | None] = relationship("Customer", back_populates="receipts")
     payments: Mapped[list[ReceiptPayment]] = relationship(

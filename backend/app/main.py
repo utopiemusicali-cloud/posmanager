@@ -68,6 +68,18 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE shop_receipts MODIFY COLUMN metodo_pagamento VARCHAR(128)"
             ))
 
+        # created_at su shop_receipts: imposta DEFAULT CURRENT_TIMESTAMP se mancante
+        cr_default = (await conn.execute(text(
+            "SELECT COLUMN_DEFAULT FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'shop_receipts' "
+            "AND COLUMN_NAME = 'created_at'"
+        ))).scalar()
+        if cr_default is None:
+            await conn.execute(text(
+                "ALTER TABLE shop_receipts "
+                "MODIFY COLUMN created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"
+            ))
+
         # Colonne shop_settings: note_piede (aggiunta dopo la creazione iniziale)
         for col_def in [
             ("note_piede", "VARCHAR(255) NULL"),
