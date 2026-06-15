@@ -28,19 +28,17 @@ export default function AppLayout() {
   const isAdmin = role === 'admin' || isSuperadmin
   const isViewing = !!viewingCompany  // superadmin sta visualizzando un'azienda
 
-  // Menu per superadmin NON in modalità viewing → solo pannello admin
-  const superadminMenu = [
-    {
-      key: 'admin-group',
-      label: 'SUPERADMIN',
-      type: 'group' as const,
-      children: [
-        { key: '/admin', icon: <ControlOutlined />, label: 'Pannello Admin' },
-      ],
-    },
-  ]
+  // Sezione superadmin (visibile sempre quando si è superadmin)
+  const adminGroup = {
+    key: 'admin-group',
+    label: 'SUPERADMIN',
+    type: 'group' as const,
+    children: [
+      { key: '/admin', icon: <ControlOutlined />, label: 'Pannello Admin' },
+    ],
+  }
 
-  // Menu normale (operator/admin o superadmin in viewing mode)
+  // Menu normale (sempre visibile, per tutti i ruoli)
   const normalMenu = [
     {
       key: 'discogs',
@@ -68,7 +66,10 @@ export default function AppLayout() {
     },
   ]
 
-  const menuItems = isSuperadmin && !isViewing ? superadminMenu : normalMenu
+  // Superadmin vede pannello admin + tutto il menu normale
+  const menuItems = isSuperadmin && !isViewing
+    ? [adminGroup, ...normalMenu]
+    : normalMenu
 
   const handleLogout = () => { logout(); navigate('/login') }
 
