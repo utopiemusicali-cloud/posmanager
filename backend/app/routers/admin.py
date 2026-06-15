@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import require_superadmin
-from app.auth.service import create_access_token
+from app.auth.service import create_access_token, hash_password
 from app.database import get_company_session_maker, get_main_db
 from app.models.company import Company
 from app.models.company_settings import CompanySettings
@@ -75,6 +75,20 @@ class ViewTokenOut(BaseModel):
 
 class SlugSuggestionOut(BaseModel):
     db_name: str
+
+
+class CompanyUserOut(BaseModel):
+    id: int
+    username: str
+    display_name: str | None
+    role: str
+    is_active: bool
+
+    model_config = {"from_attributes": True}
+
+
+class ResetPasswordIn(BaseModel):
+    new_password: str
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -227,6 +241,47 @@ async def update_company_settings(
         result = _cs_to_out(cs)
 
     return result
+
+
+# ── Utenti per tenant ────────────────────────────────────────────────────────
+
+@router.get("/companies/{company_id}/users", response_model=list[CompanyUserOut])
+async def list_company_users(
+    company_id: int,
+    _sa: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_main_db),
+):
+    await _get_company_or_404(db, company_id)
+    users = (await db.execute(
+        select(User)
+        .where(User.company_id == company_id)
+        .order_by(User.id)
+    )).scalars().all()
+    return [CompanyUserOut(
+        id=u.id, username=u.username, display_name=u.display_name,
+        role=u.role, is_active=u.is_active,
+    ) for u in users]
+
+
+@router.post("/companies/{company_id}/users/{user_id}/password", response_model=dict)
+async def reset_company_user_password(
+    company_id: int,
+    user_id: int,
+    body: ResetPasswordIn,
+    _sa: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_main_db),
+):
+    await _get_company_or_404(db, company_id)
+    user = (await db.execute(
+        select(User).where(User.id == user_id, User.company_id == company_id)
+    )).scalar_one_or_none()
+    if not user:
+        raise HTTPException(404, "Utente non trovato")
+    if len(body.new_password) < 6:
+        raise HTTPException(400, "Password troppo corta (minimo 6 caratteri)")
+    user.hashed_password = hash_password(body.new_password)
+    await db.flush()
+    return {"ok": True}
 
 
 # ── View-token ────────────────────────────────────────────────────────────────

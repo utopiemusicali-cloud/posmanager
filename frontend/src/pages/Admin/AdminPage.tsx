@@ -3,11 +3,11 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Card, Table, Button, Tag, Typography, Space, message,
-  Modal, Form, Input, Drawer, Divider, Popconfirm, Tooltip,
+  Modal, Form, Input, Drawer, Divider, Popconfirm, Tooltip, Tabs,
 } from 'antd'
 import {
   EyeOutlined, ShopOutlined, PlusOutlined,
-  SettingOutlined, PoweroffOutlined,
+  SettingOutlined, PoweroffOutlined, KeyOutlined,
 } from '@ant-design/icons'
 import type { ColumnType } from 'antd/es/table'
 import client from '@/api/client'
@@ -33,6 +33,14 @@ interface CompanySettings {
   paypal_client_secret: string | null
 }
 
+interface CompanyUser {
+  id: number
+  username: string
+  display_name: string | null
+  role: string
+  is_active: boolean
+}
+
 export default function AdminPage() {
   const navigate = useNavigate()
   const { switchToCompany } = useAuthStore()
@@ -40,8 +48,10 @@ export default function AdminPage() {
 
   const [createOpen, setCreateOpen] = useState(false)
   const [settingsCompany, setSettingsCompany] = useState<CompanyRow | null>(null)
+  const [resetPwdUser, setResetPwdUser] = useState<{ user: CompanyUser; company: CompanyRow } | null>(null)
   const [createForm] = Form.useForm()
   const [settingsForm] = Form.useForm()
+  const [pwdForm] = Form.useForm()
 
   // ── Query ──────────────────────────────────────────────────────────────────
 
@@ -58,6 +68,15 @@ export default function AdminPage() {
     queryFn: async () => {
       const r = await client.get(`/api/v1/admin/companies/${settingsCompany!.id}/settings`)
       return r.data as CompanySettings
+    },
+    enabled: !!settingsCompany,
+  })
+
+  const { data: tenantUsers = [] } = useQuery({
+    queryKey: ['admin-company-users', settingsCompany?.id],
+    queryFn: async () => {
+      const r = await client.get(`/api/v1/admin/companies/${settingsCompany!.id}/users`)
+      return r.data as CompanyUser[]
     },
     enabled: !!settingsCompany,
   })
@@ -114,6 +133,18 @@ export default function AdminPage() {
       qc.invalidateQueries({ queryKey: ['admin-company-settings', settingsCompany?.id] })
     },
     onError: () => message.error('Errore salvataggio impostazioni'),
+  })
+
+  const resetPwdMutation = useMutation({
+    mutationFn: async ({ companyId, userId, password }: { companyId: number; userId: number; password: string }) => {
+      await client.post(`/api/v1/admin/companies/${companyId}/users/${userId}/password`, { new_password: password })
+    },
+    onSuccess: () => {
+      message.success('Password aggiornata')
+      setResetPwdUser(null)
+      pwdForm.resetFields()
+    },
+    onError: () => message.error('Errore reset password'),
   })
 
   // ── Handlers ───────────────────────────────────────────────────────────────
@@ -303,49 +334,121 @@ export default function AdminPage() {
         title={`Impostazioni — ${settingsCompany?.name ?? ''}`}
         open={!!settingsCompany}
         onClose={() => setSettingsCompany(null)}
-        width={420}
-        extra={
-          <Button
-            type="primary"
-            loading={saveSettingsMutation.isPending}
-            onClick={handleSaveSettings}
-          >
-            Salva
-          </Button>
-        }
+        width={460}
       >
-        <Form form={settingsForm} layout="vertical">
-          <Divider orientation="left" plain>Discogs</Divider>
-          <Form.Item name="discogs_token" label="Token API">
-            <Input.Password
-              placeholder="Token Discogs"
-              disabled={settingsFetching}
-            />
-          </Form.Item>
-          <Form.Item name="discogs_username" label="Username">
-            <Input placeholder="Username Discogs" disabled={settingsFetching} />
-          </Form.Item>
-          <Form.Item name="discogs_password" label="Password">
-            <Input.Password placeholder="Password Discogs" disabled={settingsFetching} />
-          </Form.Item>
+        <Tabs
+          items={[
+            {
+              key: 'users',
+              label: 'Utenti',
+              children: (
+                <Table
+                  dataSource={tenantUsers}
+                  rowKey="id"
+                  size="small"
+                  pagination={false}
+                  columns={[
+                    { title: 'Username', dataIndex: 'username', key: 'username' },
+                    {
+                      title: 'Ruolo', dataIndex: 'role', key: 'role', width: 80,
+                      render: (v: string) => (
+                        <Tag color={v === 'admin' ? 'purple' : v === 'viewer' ? 'default' : 'blue'}>
+                          {v}
+                        </Tag>
+                      ),
+                    },
+                    {
+                      title: '', key: 'actions', width: 50,
+                      render: (_: unknown, u: CompanyUser) => (
+                        <Tooltip title="Reset password">
+                          <Button
+                            icon={<KeyOutlined />}
+                            size="small"
+                            onClick={() => { pwdForm.resetFields(); setResetPwdUser({ user: u, company: settingsCompany! }) }}
+                          />
+                        </Tooltip>
+                      ),
+                    },
+                  ] as ColumnType<CompanyUser>[]}
+                />
+              ),
+            },
+            {
+              key: 'integrations',
+              label: 'Integrazioni',
+              children: (
+                <>
+                  <Form form={settingsForm} layout="vertical">
+                    <Divider orientation="left" plain>Discogs</Divider>
+                    <Form.Item name="discogs_token" label="Token API">
+                      <Input.Password placeholder="Token Discogs" disabled={settingsFetching} />
+                    </Form.Item>
+                    <Form.Item name="discogs_username" label="Username">
+                      <Input placeholder="Username Discogs" disabled={settingsFetching} />
+                    </Form.Item>
+                    <Form.Item name="discogs_password" label="Password">
+                      <Input.Password placeholder="Password Discogs" disabled={settingsFetching} />
+                    </Form.Item>
 
-          <Divider orientation="left" plain>SumUp</Divider>
-          <Form.Item name="sumup_api_key" label="API Key">
-            <Input.Password placeholder="SumUp API Key" disabled={settingsFetching} />
-          </Form.Item>
-          <Form.Item name="sumup_merchant_code" label="Merchant Code">
-            <Input placeholder="Merchant Code" disabled={settingsFetching} />
-          </Form.Item>
+                    <Divider orientation="left" plain>SumUp</Divider>
+                    <Form.Item name="sumup_api_key" label="API Key">
+                      <Input.Password placeholder="SumUp API Key" disabled={settingsFetching} />
+                    </Form.Item>
+                    <Form.Item name="sumup_merchant_code" label="Merchant Code">
+                      <Input placeholder="Merchant Code" disabled={settingsFetching} />
+                    </Form.Item>
 
-          <Divider orientation="left" plain>PayPal</Divider>
-          <Form.Item name="paypal_client_id" label="Client ID">
-            <Input placeholder="PayPal Client ID" disabled={settingsFetching} />
-          </Form.Item>
-          <Form.Item name="paypal_client_secret" label="Client Secret">
-            <Input.Password placeholder="PayPal Client Secret" disabled={settingsFetching} />
+                    <Divider orientation="left" plain>PayPal</Divider>
+                    <Form.Item name="paypal_client_id" label="Client ID">
+                      <Input placeholder="PayPal Client ID" disabled={settingsFetching} />
+                    </Form.Item>
+                    <Form.Item name="paypal_client_secret" label="Client Secret">
+                      <Input.Password placeholder="PayPal Client Secret" disabled={settingsFetching} />
+                    </Form.Item>
+                  </Form>
+                  <Button
+                    type="primary"
+                    loading={saveSettingsMutation.isPending}
+                    onClick={handleSaveSettings}
+                    style={{ marginTop: 8 }}
+                  >
+                    Salva integrazioni
+                  </Button>
+                </>
+              ),
+            },
+          ]}
+        />
+      </Drawer>
+
+      {/* ── Modal: Reset Password ───────────────────────────────────────── */}
+      <Modal
+        title={`Reset password — ${resetPwdUser?.user.username ?? ''}`}
+        open={!!resetPwdUser}
+        onOk={async () => {
+          const values = await pwdForm.validateFields()
+          resetPwdMutation.mutate({
+            companyId: resetPwdUser!.company.id,
+            userId: resetPwdUser!.user.id,
+            password: values.new_password,
+          })
+        }}
+        onCancel={() => { setResetPwdUser(null); pwdForm.resetFields() }}
+        confirmLoading={resetPwdMutation.isPending}
+        okText="Aggiorna"
+        cancelText="Annulla"
+        destroyOnClose
+      >
+        <Form form={pwdForm} layout="vertical" style={{ marginTop: 16 }}>
+          <Form.Item
+            name="new_password"
+            label="Nuova Password"
+            rules={[{ required: true, min: 6, message: 'Minimo 6 caratteri' }]}
+          >
+            <Input.Password placeholder="Nuova password" />
           </Form.Item>
         </Form>
-      </Drawer>
+      </Modal>
     </div>
   )
 }
