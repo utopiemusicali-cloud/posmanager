@@ -10,10 +10,19 @@ import CostCentersPage from '@/pages/CostCenters/CostCentersPage'
 import DiscogsOrdersPage from '@/pages/DiscogsOrders/DiscogsOrdersPage'
 import SettingsPage from '@/pages/Settings/SettingsPage'
 import UsersPage from '@/pages/Users/UsersPage'
+import AdminPage from '@/pages/Admin/AdminPage'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.token)
   return token ? <>{children}</> : <Navigate to="/login" replace />
+}
+
+function DefaultRedirect() {
+  const role = useAuthStore((s) => s.role)
+  const viewingCompany = useAuthStore((s) => s.viewingCompany)
+  // Superadmin senza company view → pannello admin
+  if (role === 'superadmin' && !viewingCompany) return <Navigate to="/admin" replace />
+  return <Navigate to="/dashboard" replace />
 }
 
 export default function App() {
@@ -29,7 +38,8 @@ export default function App() {
             </PrivateRoute>
           }
         >
-          <Route index element={<Navigate to="/dashboard" replace />} />
+          <Route index element={<DefaultRedirect />} />
+          <Route path="admin" element={<AdminPage />} />
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="receipt" element={<ReceiptPage />} />
           <Route path="customers" element={<CustomersPage />} />

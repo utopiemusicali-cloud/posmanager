@@ -46,3 +46,9 @@ def require_not_viewer(current_user: User = Depends(get_current_user)) -> User:
     if current_user.role == UserRole.viewer:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accesso in sola lettura")
     return current_user
+
+
+def require_superadmin(current_user: User = Depends(get_current_user)) -> User:
+    if current_user.role != UserRole.superadmin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo superadmin")
+    return current_user

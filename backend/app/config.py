@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     FIRST_ADMIN_USERNAME: str = "admin"
     FIRST_ADMIN_PASSWORD: str = "changeme"
 
+    # Superadmin globale (company_id=None) — creato/aggiornato ad ogni avvio se configurato
+    SUPERADMIN_USERNAME: str = ""
+    SUPERADMIN_PASSWORD: str = ""
+
     # Discogs (legacy: sarà migrato in company_settings_integrations al primo avvio)
     DISCOGS_TOKEN: str = ""
     INVENTORY_CSV_DIR: str = "/inventory"

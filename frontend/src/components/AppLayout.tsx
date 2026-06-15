@@ -1,5 +1,5 @@
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
-import { Layout, Menu, Button, Typography, Space, Avatar, Tag } from 'antd'
+import { Layout, Menu, Button, Typography, Space, Avatar, Tag, Alert } from 'antd'
 import {
   DashboardOutlined,
   FileTextOutlined,
@@ -11,6 +11,8 @@ import {
   UserOutlined,
   SettingOutlined,
   UsergroupAddOutlined,
+  ControlOutlined,
+  RollbackOutlined,
 } from '@ant-design/icons'
 import { useAuthStore } from '@/store/auth'
 
@@ -20,11 +22,26 @@ const { Text } = Typography
 export default function AppLayout() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { username, role, logout } = useAuthStore()
+  const { username, role, viewingCompany, exitCompanyView, logout } = useAuthStore()
 
-  const isAdmin = role === 'admin' || role === 'superadmin'
+  const isSuperadmin = role === 'superadmin'
+  const isAdmin = role === 'admin' || isSuperadmin
+  const isViewing = !!viewingCompany  // superadmin sta visualizzando un'azienda
 
-  const menuItems = [
+  // Menu per superadmin NON in modalità viewing → solo pannello admin
+  const superadminMenu = [
+    {
+      key: 'admin-group',
+      label: 'SUPERADMIN',
+      type: 'group' as const,
+      children: [
+        { key: '/admin', icon: <ControlOutlined />, label: 'Pannello Admin' },
+      ],
+    },
+  ]
+
+  // Menu normale (operator/admin o superadmin in viewing mode)
+  const normalMenu = [
     {
       key: 'discogs',
       label: 'DISCOGS',
@@ -43,7 +60,7 @@ export default function AppLayout() {
         { key: '/receipt', icon: <FileTextOutlined />, label: 'Nuova Ricevuta' },
         { key: '/customers', icon: <TeamOutlined />, label: 'Rubrica Clienti' },
         { key: '/cost-centers', icon: <FundOutlined />, label: 'Centro Costi' },
-        ...(isAdmin ? [
+        ...(isAdmin && !isViewing ? [
           { key: '/users', icon: <UsergroupAddOutlined />, label: 'Utenti' },
           { key: '/settings', icon: <SettingOutlined />, label: 'Impostazioni' },
         ] : []),
@@ -51,10 +68,11 @@ export default function AppLayout() {
     },
   ]
 
-  const handleLogout = () => {
-    logout()
-    navigate('/login')
-  }
+  const menuItems = isSuperadmin && !isViewing ? superadminMenu : normalMenu
+
+  const handleLogout = () => { logout(); navigate('/login') }
+
+  const handleExitView = () => { exitCompanyView(); navigate('/admin') }
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -62,13 +80,30 @@ export default function AppLayout() {
         width={220}
         style={{ background: '#34495e', overflow: 'auto', height: '100vh', position: 'fixed', left: 0, top: 0, bottom: 0 }}
       >
-        {/* Logo / Titolo */}
+        {/* Logo */}
         <div style={{ padding: '20px 16px 8px', textAlign: 'center' }}>
-          <Text strong style={{ color: 'white', fontSize: 18, display: 'block' }}>
-            POSMANAGER
+          <Text strong style={{ color: 'white', fontSize: 18, display: 'block' }}>POSMANAGER</Text>
+          <Text style={{ color: '#bdc3c7', fontSize: 11 }}>
+            {isViewing ? viewingCompany : 'Oblique Strategies'}
           </Text>
-          <Text style={{ color: '#bdc3c7', fontSize: 11 }}>Oblique Strategies</Text>
         </div>
+
+        {/* Banner viewer */}
+        {isViewing && (
+          <div style={{ margin: '0 8px 8px', background: '#e67e22', borderRadius: 4, padding: '6px 8px' }}>
+            <Text style={{ color: 'white', fontSize: 11, display: 'block' }}>
+              👁 Sola lettura
+            </Text>
+            <Button
+              size="small"
+              icon={<RollbackOutlined />}
+              onClick={handleExitView}
+              style={{ marginTop: 4, width: '100%', fontSize: 11 }}
+            >
+              Torna ad Admin
+            </Button>
+          </div>
+        )}
 
         <Menu
           mode="inline"
@@ -83,10 +118,18 @@ export default function AppLayout() {
         <div style={{ position: 'absolute', bottom: 0, width: '100%', padding: '16px' }}>
           <Space direction="vertical" style={{ width: '100%' }}>
             <Space>
-              <Avatar icon={<UserOutlined />} size="small" style={{ background: '#8e44ad' }} />
+              <Avatar icon={<UserOutlined />} size="small"
+                style={{ background: isSuperadmin ? '#c0392b' : '#8e44ad' }} />
               <div>
                 <Text style={{ color: '#bdc3c7', fontSize: 12, display: 'block' }}>{username}</Text>
-                {role && <Tag color={role === 'admin' || role === 'superadmin' ? 'purple' : 'default'} style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>{role}</Tag>}
+                {role && (
+                  <Tag
+                    color={isSuperadmin ? 'red' : role === 'admin' ? 'purple' : 'default'}
+                    style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }}
+                  >
+                    {isViewing ? 'viewer' : role}
+                  </Tag>
+                )}
               </div>
             </Space>
             <Button

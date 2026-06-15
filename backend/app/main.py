@@ -26,6 +26,7 @@ from app.routers.sessions import router as sessions_router
 from app.routers.settings import router as settings_router
 from app.routers.transactions import router as transactions_router
 from app.routers.users import router as users_router
+from app.routers.admin import router as admin_router
 
 
 async def _ensure_main_db_exists() -> None:
@@ -237,6 +238,24 @@ async def lifespan(app: FastAPI):
     # 4. Prima esecuzione: seed azienda + migrazione utenti
     await _seed_main_db()
 
+    # 5. Crea/aggiorna superadmin se configurato in env
+    if settings.SUPERADMIN_USERNAME and settings.SUPERADMIN_PASSWORD:
+        async with MainSessionLocal() as db:
+            sa = (await db.execute(
+                select(User).where(User.username == settings.SUPERADMIN_USERNAME)
+            )).scalar_one_or_none()
+            if not sa:
+                db.add(User(
+                    company_id=None,
+                    username=settings.SUPERADMIN_USERNAME,
+                    hashed_password=hash_password(settings.SUPERADMIN_PASSWORD),
+                    display_name="Super Admin",
+                    role=UserRole.superadmin,
+                    is_active=True,
+                ))
+                await db.commit()
+                print(f"[startup] Superadmin '{settings.SUPERADMIN_USERNAME}' creato.")
+
     yield
     # ── Shutdown ─────────────────────────────────────────────────────────────
     await main_engine.dispose()
@@ -273,6 +292,7 @@ app.include_router(inventory_router)
 app.include_router(integrations_router)
 app.include_router(settings_router)
 app.include_router(users_router)
+app.include_router(admin_router)
 
 
 @app.get("/api/v1/health")
