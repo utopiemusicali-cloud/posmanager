@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { queryClient } from '@/lib/queryClient'
 
 interface AuthState {
   token: string | null
@@ -38,6 +39,9 @@ export const useAuthStore = create<AuthState>()(
         const payload = decodeJwtPayload(token)
         set({ token, username, role: (payload.role as string) ?? null,
               superadminToken: null, viewingCompany: null, viewingCompanyId: null })
+        // Svuota la cache: dati della sessione precedente (altro utente/azienda)
+        // non devono restare visibili dopo il login.
+        queryClient.clear()
       },
 
       switchToCompany: (viewToken, companyName, companyId) => {
@@ -48,6 +52,8 @@ export const useAuthStore = create<AuthState>()(
           viewingCompanyId: companyId,
           role: 'viewer',
         })
+        // Cambio azienda: la cache contiene dati dell'azienda precedente.
+        queryClient.clear()
       },
 
       exitCompanyView: () => {
@@ -59,12 +65,16 @@ export const useAuthStore = create<AuthState>()(
           viewingCompanyId: null,
           role: 'superadmin',
         })
+        queryClient.clear()
       },
 
-      logout: () => set({
-        token: null, username: null, role: null,
-        superadminToken: null, viewingCompany: null, viewingCompanyId: null,
-      }),
+      logout: () => {
+        set({
+          token: null, username: null, role: null,
+          superadminToken: null, viewingCompany: null, viewingCompanyId: null,
+        })
+        queryClient.clear()
+      },
     }),
     { name: 'posmanager-auth' },
   ),
