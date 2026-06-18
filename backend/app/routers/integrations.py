@@ -4,9 +4,13 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user
 from app.config import settings
+from app.database import get_db
+from app.models.company_settings import CompanySettings
 from app.services.discogs_orders_service import (
     ORDER_STATUSES, cancel_order, fetch_all_orders, fetch_orders,
     get_order_messages, mark_as_shipped,
@@ -19,10 +23,14 @@ router = APIRouter(
 )
 
 
-def _require_token():
-    if not settings.DISCOGS_TOKEN:
-        raise HTTPException(400, "DISCOGS_TOKEN non configurato nel .env del server")
-    return settings.DISCOGS_TOKEN
+async def _require_token(db: AsyncSession = Depends(get_db)) -> str:
+    """Token Discogs dell'azienda corrente (company_settings_integrations).
+    Fallback su DISCOGS_TOKEN globale solo per retrocompatibilità (azienda di default)."""
+    cs = (await db.execute(select(CompanySettings))).scalars().first()
+    token = (cs.discogs_token if cs else None) or settings.DISCOGS_TOKEN
+    if not token:
+        raise HTTPException(400, "Discogs token non configurato. Vai su Impostazioni > Integrazioni.")
+    return token
 
 
 # ── Ordini paginati (default) ──────────────────────────────────────────────────
@@ -33,8 +41,8 @@ async def get_discogs_orders(
     sort_order: str = Query("desc"),
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=100),
+    token: str = Depends(_require_token),
 ):
-    token = _require_token()
     try:
         return await fetch_orders(token, status, sort_order, page, per_page)
     except Exception as e:
@@ -44,8 +52,7 @@ async def get_discogs_orders(
 # ── Tutti gli ordini per anno (con statistiche) ───────────────────────────────
 
 @router.get("/discogs/orders/year/{year}")
-async def get_discogs_orders_year(year: int):
-    token = _require_token()
+async def get_discogs_orders_year(year: int, token: str = Depends(_require_token)):
     try:
         orders = await fetch_all_orders(token, year)
     except Exception as e:
@@ -65,8 +72,7 @@ async def get_discogs_orders_year(year: int):
 # ── Messaggi ordine ────────────────────────────────────────────────────────────
 
 @router.get("/discogs/orders/{order_id}/messages")
-async def get_messages(order_id: str):
-    token = _require_token()
+async def get_messages(order_id: str, token: str = Depends(_require_token)):
     try:
         msgs = await get_order_messages(token, order_id)
         return {"messages": msgs}
@@ -79,9 +85,8 @@ class SendMessagePayload(BaseModel):
 
 
 @router.post("/discogs/orders/{order_id}/messages")
-async def send_message(order_id: str, body: SendMessagePayload):
+async def send_message(order_id: str, body: SendMessagePayload, token: str = Depends(_require_token)):
     """Invia un messaggio all'acquirente senza cambiare lo status dell'ordine."""
-    token = _require_token()
     if not body.message.strip():
         raise HTTPException(400, "Messaggio vuoto")
     headers = {
@@ -109,8 +114,7 @@ class ShipPayload(BaseModel):
 
 
 @router.post("/discogs/orders/{order_id}/ship")
-async def ship_order(order_id: str, body: ShipPayload):
-    token = _require_token()
+async def ship_order(order_id: str, body: ShipPayload, token: str = Depends(_require_token)):
     if not body.tracking.strip():
         raise HTTPException(400, "Numero di tracking obbligatorio")
     try:
@@ -129,8 +133,7 @@ class CancelPayload(BaseModel):
 
 
 @router.post("/discogs/orders/{order_id}/cancel")
-async def cancel_discogs_order(order_id: str, body: CancelPayload):
-    token = _require_token()
+async def cancel_discogs_order(order_id: str, body: CancelPayload, token: str = Depends(_require_token)):
     try:
         ok = await cancel_order(token, order_id, body.reason)
     except Exception as e:
@@ -143,8 +146,7 @@ async def cancel_discogs_order(order_id: str, body: CancelPayload):
 # ── Immagini di un release ────────────────────────────────────────────────────
 
 @router.get("/discogs/releases/{release_id}/images")
-async def get_release_images(release_id: int):
-    token = _require_token()
+async def get_release_images(release_id: int, token: str = Depends(_require_token)):
     import httpx
     headers = {"Authorization": f"Discogs token={token}", "User-Agent": "posmanager/1.0"}
     async with httpx.AsyncClient(headers=headers, timeout=15) as c:
@@ -166,7 +168,7 @@ async def get_order_statuses():
     return {"statuses": ORDER_STATUSES}
 
 
-# ── Stub SumUp / PayPal ────────────────────────────────────────────────────────
+# ── Stub SumUp / PayPal ───────────────────────────────────────────────────────
 
 @router.get("/sumup/sync")
 async def sync_sumup():

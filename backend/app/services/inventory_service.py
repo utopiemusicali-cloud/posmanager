@@ -1,5 +1,9 @@
 """Servizio inventario: CSV Discogs + metadati Genre/Style/Year.
 Ricerca vettorizzata, filtri facet, facets con conteggi.
+
+Multi-tenant: ogni azienda ha la propria sotto-cartella CSV
+(INVENTORY_CSV_DIR/{db_name}/) per evitare di mischiare gli export
+Discogs di aziende diverse. Vedi get_inventory_service().
 """
 from __future__ import annotations
 
@@ -11,12 +15,6 @@ from typing import Any
 import pandas as pd
 
 from app.config import settings
-
-_CSV_DIR = settings.INVENTORY_CSV_DIR
-
-# Dict metadati condiviso: { release_id: {"genre","style","year","country"} }
-# Popolato dal router leggendo la tabella release_meta del DB.
-_META: dict[str, dict] = {}
 
 _REQUIRED = ["source", "listing_id", "artist", "title", "label", "catno",
              "format", "price", "listed", "media_condition", "sleeve_condition",
@@ -54,8 +52,8 @@ def _media_type(fmt: str) -> str:
     return "Altro"
 
 
-def _load_sync() -> pd.DataFrame:
-    csvs = sorted(glob.glob(os.path.join(_CSV_DIR, "*.csv")), key=os.path.getmtime, reverse=True)
+def _load_sync(csv_dir: str, meta: dict[str, dict]) -> pd.DataFrame:
+    csvs = sorted(glob.glob(os.path.join(csv_dir, "*.csv")), key=os.path.getmtime, reverse=True)
     if not csvs:
         return pd.DataFrame(columns=_OUT_COLS + ["_blob", "_price"])
 
@@ -82,10 +80,10 @@ def _load_sync() -> pd.DataFrame:
     df["media_type"] = df["format"].apply(_media_type)
 
     # Merge metadati Genre/Style/Year dal dict in memoria (caricato da DB)
-    if _META:
-        df["genre"] = df["release_id"].map(lambda r: _META.get(str(r), {}).get("genre", ""))
-        df["style"] = df["release_id"].map(lambda r: _META.get(str(r), {}).get("style", ""))
-        df["year"] = df["release_id"].map(lambda r: _META.get(str(r), {}).get("year", ""))
+    if meta:
+        df["genre"] = df["release_id"].map(lambda r: meta.get(str(r), {}).get("genre", ""))
+        df["style"] = df["release_id"].map(lambda r: meta.get(str(r), {}).get("style", ""))
+        df["year"] = df["release_id"].map(lambda r: meta.get(str(r), {}).get("year", ""))
     else:
         df["genre"] = ""
         df["style"] = ""
@@ -112,15 +110,19 @@ def _explode_counts(series: pd.Series) -> dict[str, int]:
 
 
 class InventoryService:
-    def __init__(self) -> None:
+    """Un'istanza per azienda (csv_dir dedicata). Vedi get_inventory_service()."""
+
+    def __init__(self, csv_dir: str) -> None:
+        self._csv_dir = csv_dir
         self._df: pd.DataFrame | None = None
+        self._meta: dict[str, dict] = {}
         self._lock = asyncio.Lock()
 
     async def _ensure_loaded(self) -> pd.DataFrame:
         async with self._lock:
             if self._df is None:
                 loop = asyncio.get_event_loop()
-                self._df = await loop.run_in_executor(None, _load_sync)
+                self._df = await loop.run_in_executor(None, _load_sync, self._csv_dir, self._meta)
         return self._df
 
     async def reload(self) -> None:
@@ -223,16 +225,28 @@ class InventoryService:
 
     def set_meta(self, meta: dict[str, dict]) -> None:
         """Imposta il dict metadati (da DB) e invalida la cache del DataFrame."""
-        global _META
-        _META = meta
+        self._meta = meta
         self._df = None  # forza ricostruzione al prossimo accesso
 
     async def unenriched_release_ids(self, limit: int) -> list[str]:
         ids = await self.unique_release_ids()
-        out = [r for r in ids if str(r) not in _META]
+        out = [r for r in ids if str(r) not in self._meta]
         return out[:limit]
 
     async def enrich_progress(self) -> dict:
         ids = await self.unique_release_ids()
-        enriched = sum(1 for r in ids if str(r) in _META)
+        enriched = sum(1 for r in ids if str(r) in self._meta)
         return {"total": len(ids), "enriched": enriched, "remaining": len(ids) - enriched}
+
+
+# ── Cache istanze per azienda ─────────────────────────────────────────────────
+_instances: dict[str, InventoryService] = {}
+
+
+def get_inventory_service(db_name: str) -> InventoryService:
+    """Restituisce (creando se serve) l'InventoryService dedicato all'azienda.
+    Ogni azienda ha una sotto-cartella propria: INVENTORY_CSV_DIR/{db_name}/."""
+    if db_name not in _instances:
+        csv_dir = os.path.join(settings.INVENTORY_CSV_DIR, db_name)
+        _instances[db_name] = InventoryService(csv_dir)
+    return _instances[db_name]

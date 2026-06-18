@@ -12,14 +12,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.dependencies import get_current_user
 from app.config import settings
 from app.database import get_db
+from app.models.company_settings import CompanySettings
 from app.models.inventory_item import InventoryItem
 from app.models.release_meta import ReleaseMeta
 from app.models.release_sales import ReleaseSales
+from app.models.user import User
 from app.services import enrich_worker
 from app.services.discogs_scraper_service import DiscogsScraper
 from app.services.discogs_lookup_service import lookup_release
 from app.services.discogs_sync_service import sync_inventory
-from app.services.inventory_service import InventoryService
+from app.services.inventory_service import InventoryService, get_inventory_service
 
 router = APIRouter(
     prefix="/api/v1/inventory",
@@ -27,22 +29,30 @@ router = APIRouter(
     dependencies=[Depends(get_current_user)],
 )
 
-_svc = InventoryService()
+
+def _db_name(current_user: User) -> str:
+    return current_user._company_db or settings.default_company_db
 
 
-async def _sync_meta(db: AsyncSession) -> None:
-    """Sincronizza il dict metadati in memoria con la tabella release_meta.
-    Confronta COUNT(*) (veloce) per rilevare modifiche fatte da altri worker.
-    """
-    from app.services import inventory_service as _is
+async def _company_discogs_token(db: AsyncSession) -> str | None:
+    """Token Discogs dell'azienda corrente (company_settings_integrations).
+    Fallback su DISCOGS_TOKEN globale solo per retrocompatibilità (azienda di default)."""
+    cs = (await db.execute(select(CompanySettings))).scalars().first()
+    return (cs.discogs_token if cs else None) or settings.DISCOGS_TOKEN
+
+
+async def _sync_meta(svc: InventoryService, db: AsyncSession) -> None:
+    """Sincronizza il dict metadati in memoria (dell'azienda corrente) con la
+    tabella release_meta del suo DB. Confronta COUNT(*) (veloce) per rilevare
+    modifiche fatte da altri worker."""
     count = (await db.execute(select(func.count()).select_from(ReleaseMeta))).scalar_one()
-    if count == len(_is._META):
+    if count == len(svc._meta):
         return
     rows = (await db.execute(
         select(ReleaseMeta.release_id, ReleaseMeta.genre, ReleaseMeta.style, ReleaseMeta.year)
     )).all()
     meta = {r[0]: {"genre": r[1] or "", "style": r[2] or "", "year": r[3] or ""} for r in rows}
-    _svc.set_meta(meta)
+    svc.set_meta(meta)
 
 _MEDIA_CONDITIONS = [
     "Mint (M)", "Near Mint (NM or M-)", "Very Good Plus (VG+)",
@@ -94,9 +104,11 @@ async def get_inventory(
     sort: str = "listed_desc",
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=1, le=1000),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    await _sync_meta(db)
+    svc = get_inventory_service(_db_name(current_user))
+    await _sync_meta(svc, db)
     filters = {
         "status": status, "q": q, "media_type": media_type,
         "format_desc": format_desc, "media_condition": media_condition,
@@ -105,7 +117,7 @@ async def get_inventory(
         "price_min": price_min, "price_max": price_max,
     }
     start = (page - 1) * page_size
-    total, items = await _svc.query(filters, sort=sort, offset=start, limit=page_size)
+    total, items = await svc.query(filters, sort=sort, offset=start, limit=page_size)
     return {"total": total, "items": items, "page": page, "page_size": page_size}
 
 
@@ -113,9 +125,11 @@ async def get_inventory(
 
 @router.get("/facets")
 async def get_facets(status: str | None = None, q: str | None = None,
+                     current_user: User = Depends(get_current_user),
                      db: AsyncSession = Depends(get_db)):
-    await _sync_meta(db)
-    return await _svc.facets(status=status, q=q)
+    svc = get_inventory_service(_db_name(current_user))
+    await _sync_meta(svc, db)
+    return await svc.facets(status=status, q=q)
 
 
 # ── Arricchimento Genre/Style/Year (tabella release_meta) ──────────────────────
@@ -129,59 +143,69 @@ async def _fully_enriched_ids(db: AsyncSession) -> set[str]:
 
 
 @router.get("/enrich-status")
-async def enrich_status(db: AsyncSession = Depends(get_db)):
-    ids = {str(r) for r in await _svc.unique_release_ids()}
+async def enrich_status(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    db_name = _db_name(current_user)
+    svc = get_inventory_service(db_name)
+    ids = {str(r) for r in await svc.unique_release_ids()}
     done = await _fully_enriched_ids(db)
     enriched = len(ids & done)
-    st = enrich_worker.read_state()
+    st = enrich_worker.read_state(db_name)
     return {
         "total": len(ids), "enriched": enriched, "remaining": len(ids) - enriched,
-        "running": enrich_worker.is_running(), "error": st.get("error", ""),
+        "running": enrich_worker.is_running(db_name), "error": st.get("error", ""),
     }
 
 
 @router.post("/enrich-start")
-async def enrich_start():
+async def enrich_start(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """Avvia l'arricchimento come task di background sul server (autonomo)."""
-    if not settings.DISCOGS_TOKEN:
-        raise HTTPException(400, "DISCOGS_TOKEN non configurato")
-    if enrich_worker.is_running():
+    db_name = _db_name(current_user)
+    svc = get_inventory_service(db_name)
+    token = await _company_discogs_token(db)
+    if not token:
+        raise HTTPException(400, "Discogs token non configurato. Vai su Impostazioni > Integrazioni.")
+    if enrich_worker.is_running(db_name):
         return {"started": False, "already_running": True}
-    ids = [str(r) for r in await _svc.unique_release_ids()]
-    asyncio.create_task(enrich_worker.run_enrich(ids))
+    ids = [str(r) for r in await svc.unique_release_ids()]
+    asyncio.create_task(enrich_worker.run_enrich(db_name, token, ids))
     return {"started": True}
 
 
 @router.post("/enrich-stop")
-async def enrich_stop():
-    enrich_worker.request_stop()
+async def enrich_stop(current_user: User = Depends(get_current_user)):
+    db_name = _db_name(current_user)
+    enrich_worker.request_stop(db_name)
     return {"ok": True}
 
 
 # ── Sync da Discogs ────────────────────────────────────────────────────────────
 
 @router.post("/sync")
-async def sync_from_discogs():
-    if not settings.DISCOGS_TOKEN:
-        raise HTTPException(400, "DISCOGS_TOKEN non configurato nel .env del server")
+async def sync_from_discogs(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    db_name = _db_name(current_user)
+    token = await _company_discogs_token(db)
+    if not token:
+        raise HTTPException(400, "Discogs token non configurato. Vai su Impostazioni > Integrazioni.")
+    csv_dir = os.path.join(settings.INVENTORY_CSV_DIR, db_name)
     try:
-        result = await sync_inventory(settings.DISCOGS_TOKEN, settings.INVENTORY_CSV_DIR)
+        result = await sync_inventory(token, csv_dir)
     except TimeoutError as e:
         raise HTTPException(504, str(e))
     except Exception as e:
         raise HTTPException(502, f"Errore Discogs API: {e}")
-    await _svc.reload()
+    await get_inventory_service(db_name).reload()
     return result
 
 
 # ── Lookup release da URL Discogs ──────────────────────────────────────────────
 
 @router.get("/lookup-url")
-async def lookup_discogs_url(url: str):
-    if not settings.DISCOGS_TOKEN:
-        raise HTTPException(400, "DISCOGS_TOKEN non configurato")
+async def lookup_discogs_url(url: str, db: AsyncSession = Depends(get_db)):
+    token = await _company_discogs_token(db)
+    if not token:
+        raise HTTPException(400, "Discogs token non configurato. Vai su Impostazioni > Integrazioni.")
     try:
-        return await lookup_release(settings.DISCOGS_TOKEN, url)
+        return await lookup_release(token, url)
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
@@ -277,13 +301,15 @@ async def ingest_release_sales(release_id: str, body: SalesIngest,
 
 @router.get("/sales-todo")
 async def sales_todo(status: str = "For Sale", limit: int = Query(500, ge=1, le=20000),
+                     current_user: User = Depends(get_current_user),
                      db: AsyncSession = Depends(get_db)):
     """Lista release_id in inventario che NON hanno ancora dati vendita.
     Lo script locale la usa per sapere cosa scrapare."""
-    ids = await _svc.unique_release_ids()
+    svc = get_inventory_service(_db_name(current_user))
+    ids = await svc.unique_release_ids()
     if status:
         # filtra per status: prendi release_id che compaiono in quel tab
-        _total, items = await _svc.query({"status": status}, limit=20000)
+        _total, items = await svc.query({"status": status}, limit=20000)
         status_ids = {str(i.get("release_id")) for i in items if i.get("release_id")}
         ids = [r for r in ids if str(r) in status_ids]
     existing = {row[0] for row in (await db.execute(select(ReleaseSales.release_id))).all()}
