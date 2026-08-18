@@ -7,6 +7,10 @@
 # Dopo aver ottenuto i certificati (scripts/init_ssl.sh):
 #   docker compose -f docker-compose.prod.yml -f docker-compose.ssl.yml up -d --force-recreate nginx
 
+# Nome progetto fissato: i volumi restano posmanager_* anche se la cartella viene
+# spostata o rinominata (senza, Compose lo deriva dal nome della directory).
+name: posmanager
+
 services:
   mysql:
     image: mysql:8.0
