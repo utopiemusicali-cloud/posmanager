@@ -1,0 +1,50 @@
+# ── Configurazione interna, da usare quando nginx sta DIETRO il reverse-proxy ──
+# Copiare in nginx/conf.d/default.conf sul server (default.conf e' gitignorato).
+#
+# Qui non si fa TLS ne' redirect: se ne occupa /opt/apps/reverse-proxy, che
+# pubblica 80 e 443 e parla a questo container in HTTP puro sulla rete "web".
+# Un redirect verso https qui dentro creerebbe un loop con il proxy.
+
+# Il client vero puo' arrivare in HTTPS: $scheme direbbe "http" perche' e' lo
+# schema dell'ultimo hop. Si preferisce l'header del proxy quando c'e'.
+map $http_x_forwarded_proto $client_proto {
+    default $scheme;
+    ~.      $http_x_forwarded_proto;
+}
+
+server {
+    listen 80;
+    server_name _;
+
+    # Sync Discogs — timeout esteso (fino a 6 minuti)
+    location /api/v1/inventory/sync {
+        proxy_pass         http://backend:8000;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $client_proto;
+        proxy_read_timeout 600s;
+    }
+
+    # Proxy API → backend
+    location /api {
+        proxy_pass         http://backend:8000;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $client_proto;
+        proxy_read_timeout 120s;
+    }
+
+    # React SPA
+    location / {
+        root  /usr/share/nginx/html;
+        index index.html;
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Gzip
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/x-font-ttf font/opentype image/svg+xml;
+    gzip_min_length 256;
+}

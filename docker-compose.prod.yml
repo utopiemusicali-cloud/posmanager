@@ -80,12 +80,11 @@ services:
     image: nginx:alpine
     container_name: posmanager_nginx   # nome fisso: il reverse-proxy lo risolve cosi'
     restart: always
-    # Nessuna porta pubblicata: le 80/443 appartengono al reverse-proxy condiviso
-    # in /opt/apps/reverse-proxy, che raggiunge questo container sulla rete "web".
+    # Nessuna porta pubblicata e nessun TLS: le 80/443, i certificati e il
+    # rinnovo certbot appartengono al reverse-proxy in /opt/apps/reverse-proxy,
+    # che raggiunge questo container in HTTP puro sulla rete "web".
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - ./nginx/certbot/conf:/etc/letsencrypt:ro
-      - ./nginx/certbot/www:/var/www/certbot:ro
       - frontend_static:/usr/share/nginx/html:ro
     depends_on:
       - backend
@@ -104,16 +103,6 @@ services:
       - frontend_static:/output   # /app/dist = build output, /output = volume target
     # Si avvia, copia i file nel volume e termina
     restart: "no"
-
-  certbot:
-    image: certbot/certbot
-    restart: unless-stopped
-    volumes:
-      - ./nginx/certbot/conf:/etc/letsencrypt
-      - ./nginx/certbot/www:/var/www/certbot
-    # Rinnovo automatico ogni 12 ore
-    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew --quiet; sleep 12h & wait $${!}; done;'"
-    mem_limit: 64m
 
 networks:
   # Creata a mano sul VPS: docker network create web
