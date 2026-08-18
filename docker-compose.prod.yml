@@ -78,10 +78,10 @@ services:
 
   nginx:
     image: nginx:alpine
+    container_name: posmanager_nginx   # nome fisso: il reverse-proxy lo risolve cosi'
     restart: always
-    ports:
-      - "80:80"
-      - "443:443"
+    # Nessuna porta pubblicata: le 80/443 appartengono al reverse-proxy condiviso
+    # in /opt/apps/reverse-proxy, che raggiunge questo container sulla rete "web".
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ./nginx/certbot/conf:/etc/letsencrypt:ro
@@ -89,6 +89,11 @@ services:
       - frontend_static:/usr/share/nginx/html:ro
     depends_on:
       - backend
+    networks:
+      # "default" va ripetuto: indicare networks esplicitamente esclude un
+      # servizio dalla rete di default, e nginx deve continuare a vedere backend.
+      - default
+      - web
     mem_limit: 128m
 
   frontend_builder:
@@ -109,6 +114,11 @@ services:
     # Rinnovo automatico ogni 12 ore
     entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew --quiet; sleep 12h & wait $${!}; done;'"
     mem_limit: 64m
+
+networks:
+  # Creata a mano sul VPS: docker network create web
+  web:
+    external: true
 
 volumes:
   mysql_data:
