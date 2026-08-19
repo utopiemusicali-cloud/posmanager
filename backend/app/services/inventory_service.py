@@ -8,6 +8,7 @@ propria azienda. Vedi get_inventory_service().
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
 import pandas as pd
@@ -134,6 +135,12 @@ def _explode_counts(series: pd.Series) -> dict[str, int]:
     return counts
 
 
+_CACHE_TTL = 30  # secondi: limita la staleness tra i processi worker uvicorn
+# (la cache del DataFrame vive in RAM per-processo; .reload() esplicito dopo
+# /sync raggiunge solo il worker che ha servito quella richiesta, gli altri
+# si allineano da soli entro questo TTL).
+
+
 class InventoryService:
     """Un'istanza per azienda (DB dedicato). Vedi get_inventory_service()."""
 
@@ -142,12 +149,14 @@ class InventoryService:
         self._session_maker = get_company_session_maker(db_name)
         self._df: pd.DataFrame | None = None
         self._meta: dict[str, dict] = {}
+        self._loaded_at: float = 0.0
         self._lock = asyncio.Lock()
 
     async def _ensure_loaded(self) -> pd.DataFrame:
         async with self._lock:
-            if self._df is None:
+            if self._df is None or (time.time() - self._loaded_at) > _CACHE_TTL:
                 self._df = await _load_from_db(self._session_maker, self._meta)
+                self._loaded_at = time.time()
         return self._df
 
     async def reload(self) -> None:
