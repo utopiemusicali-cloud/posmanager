@@ -41,6 +41,12 @@ server {
         root  /usr/share/nginx/html;
         index index.html;
         try_files $uri $uri/ /index.html;
+
+        # Cache degli asset con hash nel nome file
+        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?)$ {
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+        }
     }
 
     # Gzip
