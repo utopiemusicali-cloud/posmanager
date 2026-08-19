@@ -29,7 +29,7 @@ class InventoryItem(Base):
     media_condition: Mapped[str] = mapped_column(String(100), default="")
     sleeve_condition: Mapped[str] = mapped_column(String(100), default="")
     accept_offer: Mapped[str] = mapped_column(String(1), default="N")
-    external_id: Mapped[str] = mapped_column(String(100), default="")
+    external_id: Mapped[str] = mapped_column(Text, default="")  # libero: alcuni listing Discogs ci mettono blob lunghi
     weight: Mapped[int | None] = mapped_column(Integer, nullable=True)
     format_quantity: Mapped[int] = mapped_column(Integer, default=0)
     location: Mapped[str] = mapped_column(String(100), default="")
