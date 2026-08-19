@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Table, Input, Tabs, Tag, Button, message, Alert, Select, Progress, Tooltip } from 'antd'
+import { Table, Input, InputNumber, Checkbox, Tabs, Tag, Button, message, Alert, Select, Progress, Tooltip } from 'antd'
 import type { ColumnType } from 'antd/es/table'
 import { PlusOutlined, SearchOutlined, SyncOutlined, ClearOutlined, DatabaseOutlined, LineChartOutlined } from '@ant-design/icons'
 import client from '@/api/client'
@@ -8,6 +8,71 @@ import AddInventoryModal from './AddInventoryModal'
 import SalesDrawer from './SalesDrawer'
 
 type Row = Record<string, string>
+type EditFn = (listingId: string, patch: Record<string, unknown>) => void
+
+async function patchItem(listingId: string, patch: Record<string, unknown>) {
+  await client.patch(`/api/v1/inventory/items/${encodeURIComponent(listingId)}`, patch)
+}
+
+// Testo libero, salva su blur solo se il valore è cambiato
+function EditableText({ value, placeholder, onSave, width = 200 }: {
+  value: string; placeholder?: string; onSave: (v: string) => void; width?: number
+}) {
+  const [v, setV] = useState(value)
+  useEffect(() => { setV(value) }, [value])
+  return (
+    <Input
+      size="small"
+      variant="borderless"
+      value={v}
+      placeholder={placeholder}
+      style={{ width, fontSize: 12, padding: '0 2px' }}
+      onChange={(e) => setV(e.target.value)}
+      onBlur={() => { if (v !== value) onSave(v) }}
+      onPressEnter={(e) => (e.target as HTMLInputElement).blur()}
+    />
+  )
+}
+
+// Prezzo numerico, salva su blur
+function EditablePrice({ value, onSave, label = '€', color = '#27ae60', width = 78 }: {
+  value: string; onSave: (v: number) => void; label?: string; color?: string; width?: number
+}) {
+  const [v, setV] = useState<number | undefined>(value ? parseFloat(value) : undefined)
+  useEffect(() => { setV(value ? parseFloat(value) : undefined) }, [value])
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+      <b style={{ color, fontSize: 11 }}>{label}</b>
+      <InputNumber
+        size="small"
+        variant="borderless"
+        min={0}
+        step={0.5}
+        value={v}
+        style={{ width, fontWeight: 600 }}
+        onChange={(val) => setV(val ?? undefined)}
+        onBlur={() => { if (v != null && String(v) !== value) onSave(v) }}
+      />
+    </span>
+  )
+}
+
+// Condizione (media/sleeve), da vocabolario controllato: salva subito al cambio
+function EditableCondition({ value, options, onSave, width = 118 }: {
+  value: string; options: string[]; onSave: (v: string) => void; width?: number
+}) {
+  return (
+    <Select
+      size="small"
+      variant="borderless"
+      value={value || undefined}
+      placeholder="—"
+      style={{ width, fontSize: 12 }}
+      options={options.map(o => ({ value: o, label: o }))}
+      onChange={(v) => { if (v !== value) onSave(v) }}
+    />
+  )
+}
 
 interface FacetItem { value: string; count: number; label?: string; min?: number; max?: number }
 interface Facets {
@@ -36,12 +101,6 @@ interface FilterState {
   price_range?: string  // chiave del range, es "5to10"
 }
 
-function formatPrice(v: string): string {
-  const n = parseFloat(v)
-  if (isNaN(n)) return v || '—'
-  return `€ ${n % 1 === 0 ? n.toFixed(0) : n.toFixed(2)}`
-}
-
 function formatDate(v: string): string {
   if (!v) return '—'
   const m = v.match(/^(\d{4})-(\d{2})-(\d{2})/)
@@ -49,50 +108,74 @@ function formatDate(v: string): string {
   return v.split(' ')[0]
 }
 
-const groupedColumns: ColumnType<Row>[] = [
-  { title: 'Fonte', dataIndex: 'source', width: 75, render: (v: string) => <Tag>{v}</Tag> },
-  {
-    title: 'Articolo', key: 'articolo',
-    render: (_: unknown, r: Row) => (
-      <div style={{ lineHeight: 1.35 }}>
-        <div style={{ fontWeight: 600 }}>{r.artist || '—'}{r.title ? ` — ${r.title}` : ''}</div>
-        <div style={{ fontSize: 12, color: '#888' }}>
-          {[r.label, r.catno, r.format].filter(Boolean).join(' · ') || '—'}
-        </div>
-        {(r.genre || r.year) && (
-          <div style={{ fontSize: 11, color: '#aaa' }}>
-            {[r.genre, r.style, r.year].filter(Boolean).join(' · ')}
+function makeColumns(
+  onEdit: EditFn,
+  dropdownOptions?: { media_conditions: string[]; sleeve_conditions: string[] },
+): ColumnType<Row>[] {
+  const mediaOpts = dropdownOptions?.media_conditions ?? []
+  const sleeveOpts = dropdownOptions?.sleeve_conditions ?? []
+
+  return [
+    { title: 'Fonte', dataIndex: 'source', width: 75, render: (v: string) => <Tag>{v}</Tag> },
+    {
+      title: 'Articolo', key: 'articolo',
+      render: (_: unknown, r: Row) => (
+        <div style={{ lineHeight: 1.35 }}>
+          <div style={{ fontWeight: 600 }}>{r.artist || '—'}{r.title ? ` — ${r.title}` : ''}</div>
+          <div style={{ fontSize: 12, color: '#888' }}>
+            {[r.label, r.catno, r.format].filter(Boolean).join(' · ') || '—'}
           </div>
-        )}
-      </div>
-    ),
-  },
-  {
-    title: 'Prezzo / Condizioni', key: 'prezzo', width: 200,
-    render: (_: unknown, r: Row) => (
-      <div style={{ lineHeight: 1.35 }}>
-        <div>
-          <b style={{ color: '#27ae60' }}>{formatPrice(r.price)}</b>
-          <span style={{ color: '#aaa', marginLeft: 8, fontSize: 12 }}>{formatDate(r.listed)}</span>
+          {(r.genre || r.year) && (
+            <div style={{ fontSize: 11, color: '#aaa' }}>
+              {[r.genre, r.style, r.year].filter(Boolean).join(' · ')}
+            </div>
+          )}
         </div>
-        <div style={{ fontSize: 12, color: '#888' }}>
-          M: {r.media_condition || '—'} · S: {r.sleeve_condition || '—'}
+      ),
+    },
+    {
+      title: 'Prezzo / Condizioni', key: 'prezzo', width: 260,
+      render: (_: unknown, r: Row) => (
+        <div style={{ lineHeight: 1.7 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <EditablePrice value={r.price} onSave={(v) => onEdit(r.listing_id, { price: v })} />
+            <span style={{ color: '#aaa', fontSize: 12 }}>{formatDate(r.listed)}</span>
+          </div>
+          <EditablePrice value={r.costo_unitario} label="Costo:" color="#888" width={70}
+            onSave={(v) => onEdit(r.listing_id, { costo_unitario: v })} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ fontSize: 11, color: '#888' }}>M:</span>
+            <EditableCondition value={r.media_condition} options={mediaOpts}
+              onSave={(v) => onEdit(r.listing_id, { media_condition: v })} />
+            <span style={{ fontSize: 11, color: '#888' }}>S:</span>
+            <EditableCondition value={r.sleeve_condition} options={sleeveOpts}
+              onSave={(v) => onEdit(r.listing_id, { sleeve_condition: v })} />
+          </div>
+          <Checkbox
+            checked={r.accept_offer === 'Y'}
+            onChange={(e) => onEdit(r.listing_id, { accept_offer: e.target.checked ? 'Y' : 'N' })}
+          >
+            <span style={{ fontSize: 11, color: '#888' }}>Accetta offerte</span>
+          </Checkbox>
         </div>
-      </div>
-    ),
-  },
-  {
-    title: 'Location / Note', key: 'location', width: 190,
-    render: (_: unknown, r: Row) => (
-      <div style={{ lineHeight: 1.35 }}>
-        {r.location && <div style={{ fontWeight: 600, color: '#1677ff' }}>📍 {r.location}</div>}
-        {r.comments && <div style={{ fontSize: 12, color: '#888' }}>{r.comments}</div>}
-        {!r.location && !r.comments && <span style={{ color: '#ccc' }}>—</span>}
-      </div>
-    ),
-  },
-  { title: 'ID', dataIndex: 'listing_id', width: 95, render: (v: string) => <span style={{ fontSize: 11, color: '#999' }}>{v}</span> },
-]
+      ),
+    },
+    {
+      title: 'Location / Note', key: 'location', width: 230,
+      render: (_: unknown, r: Row) => (
+        <div style={{ lineHeight: 1.5 }}>
+          <EditableText value={r.location} placeholder="Location"
+            onSave={(v) => onEdit(r.listing_id, { location: v })} />
+          <EditableText value={r.comments} placeholder="Note"
+            onSave={(v) => onEdit(r.listing_id, { comments: v })} />
+          <EditableText value={r.external_id} placeholder="External ID"
+            onSave={(v) => onEdit(r.listing_id, { external_id: v })} />
+        </div>
+      ),
+    },
+    { title: 'ID', dataIndex: 'listing_id', width: 95, render: (v: string) => <span style={{ fontSize: 11, color: '#999' }}>{v}</span> },
+  ]
+}
 
 async function getInventory(status: string, q: string, filters: FilterState, sort: string, page: number, facets?: Facets) {
   const params: Record<string, unknown> = { status, page, page_size: 100, sort }
@@ -129,6 +212,7 @@ function InventoryTable({ status }: { status: string }) {
   const [sort, setSort] = useState('listed_desc')
   const [page, setPage] = useState(1)
   const [salesRow, setSalesRow] = useState<Row | null>(null)
+  const qc = useQueryClient()
 
   const { data: facets } = useQuery({
     queryKey: ['inv-facets', status, search],
@@ -136,16 +220,38 @@ function InventoryTable({ status }: { status: string }) {
     staleTime: 60_000,
   })
 
+  const { data: dropdownOptions } = useQuery({
+    queryKey: ['inventory-dropdown-options'],
+    queryFn: async () => (await client.get('/api/v1/inventory/dropdown-options')).data,
+    staleTime: 5 * 60_000,
+  })
+
+  const queryKey = ['inventory', status, search, filters, sort, page]
   const { data, isLoading } = useQuery({
-    queryKey: ['inventory', status, search, filters, sort, page],
+    queryKey,
     queryFn: () => getInventory(status, search, filters, sort, page, facets),
   })
 
   const items: Row[] = data?.items ?? []
 
+  // Salva subito in cache (ottimistico) e manda il PATCH in background;
+  // se fallisce, ripristina rifacendo il fetch.
+  const handleEdit: EditFn = (listingId, patch) => {
+    qc.setQueryData(queryKey, (old: typeof data) => old ? {
+      ...old,
+      items: old.items.map((it: Row) => it.listing_id === listingId
+        ? { ...it, ...Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, String(v)])) }
+        : it),
+    } : old)
+    patchItem(listingId, patch).catch(() => {
+      message.error('Errore durante il salvataggio, ripristino i dati.')
+      qc.invalidateQueries({ queryKey: ['inventory'] })
+    })
+  }
+
   // Colonna azione "Vendite & Mercato" (solo se l'articolo ha release_id)
   const columns: ColumnType<Row>[] = [
-    ...groupedColumns,
+    ...makeColumns(handleEdit, dropdownOptions),
     {
       title: '', key: 'sales', width: 48, align: 'center' as const,
       render: (_: unknown, r: Row) => r.release_id ? (
@@ -267,6 +373,7 @@ export default function InventoryPage() {
   const [syncInfo, setSyncInfo] = useState<string | null>(null)
   const [addOpen, setAddOpen] = useState(false)
   const [enrichProg, setEnrichProg] = useState<{ enriched: number; total: number; running: boolean } | null>(null)
+  const [pushProg, setPushProg] = useState<{ pending: number; running: boolean; processed: number; total: number; errors: number } | null>(null)
   const [extPresent, setExtPresent] = useState(false)
   const qc = useQueryClient()
 
@@ -332,6 +439,26 @@ export default function InventoryPage() {
     message.info('Arricchimento in arresto…')
   }
 
+  // Polling stato coda push verso Discogs (parte da sola dopo le modifiche in tabella)
+  const fetchPushStatus = async () => {
+    try {
+      const r = await client.get('/api/v1/inventory/discogs-push-status')
+      setPushProg(r.data)
+      return r.data
+    } catch { return null }
+  }
+
+  useEffect(() => {
+    fetchPushStatus()
+    const id = setInterval(fetchPushStatus, 4000)
+    return () => clearInterval(id)
+  }, [])
+
+  const handlePushStop = async () => {
+    await client.post('/api/v1/inventory/discogs-push-stop')
+    message.info('Sincronizzazione Discogs in arresto…')
+  }
+
   const running = enrichProg?.running
   const pct = enrichProg && enrichProg.total ? Math.round(enrichProg.enriched / enrichProg.total * 100) : 0
 
@@ -358,6 +485,19 @@ export default function InventoryPage() {
         {extPresent && (
           <Tooltip title="Estensione Chrome rilevata: i dati di mercato si scaricano aprendo 📊 su un articolo">
             <Tag color="green">🧩 Estensione attiva</Tag>
+          </Tooltip>
+        )}
+        {pushProg && (pushProg.pending > 0 || pushProg.running) && (
+          <Tooltip title="Le modifiche fatte in tabella (prezzo, condizioni, location...) vengono rimandate all'inserzione reale su Discogs">
+            <Tag color={pushProg.running ? 'processing' : 'default'}>
+              {pushProg.running ? '🔄' : '⏳'} Sync Discogs {pushProg.processed}/{pushProg.total || pushProg.pending}
+            </Tag>
+          </Tooltip>
+        )}
+        {pushProg?.running && <Button danger size="small" onClick={handlePushStop}>Stop sync</Button>}
+        {!!pushProg?.errors && (
+          <Tooltip title="Alcune modifiche non sono state inviate a Discogs (vedi colonna dettagli articolo)">
+            <Tag color="error">⚠️ {pushProg.errors} errori sync</Tag>
           </Tooltip>
         )}
       </div>

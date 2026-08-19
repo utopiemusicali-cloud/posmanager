@@ -17,7 +17,7 @@ from app.models.inventory_item import InventoryItem
 from app.models.release_meta import ReleaseMeta
 from app.models.release_sales import ReleaseSales
 from app.models.user import User
-from app.services import enrich_worker
+from app.services import discogs_push_worker, enrich_worker
 from app.services.discogs_scraper_service import DiscogsScraper
 from app.services.discogs_lookup_service import lookup_release
 from app.services.discogs_sync_service import sync_inventory
@@ -488,3 +488,84 @@ async def add_inventory_item(body: AddInventoryItem, db: AsyncSession = Depends(
     await db.commit()
     await db.refresh(item)
     return {"id": item.id, "listing_id": item.listing_id}
+
+
+# ── Modifica rapida da tabella (prezzo, condizioni, location, note...) ─────────
+
+# Campi che esistono anche sull'inserzione Discogs: modificarli mette l'item
+# in coda per il push verso il marketplace. costo_unitario è solo interno
+# (non esiste su Discogs) e non attiva mai la sincronizzazione.
+_DISCOGS_FIELDS = {"price", "media_condition", "sleeve_condition", "location",
+                    "external_id", "comments", "accept_offer"}
+
+
+class UpdateInventoryItem(BaseModel):
+    price: float | None = None
+    media_condition: str | None = None
+    sleeve_condition: str | None = None
+    location: str | None = None
+    external_id: str | None = None
+    comments: str | None = None
+    accept_offer: str | None = None
+    costo_unitario: float | None = None
+
+
+@router.patch("/items/{listing_id}")
+async def update_inventory_item(
+    listing_id: str,
+    body: UpdateInventoryItem,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    item = (await db.execute(
+        select(InventoryItem).where(InventoryItem.listing_id == listing_id)
+    )).scalar_one_or_none()
+    if not item:
+        raise HTTPException(404, "Articolo non trovato")
+
+    changed = body.model_dump(exclude_unset=True)
+    for field, value in changed.items():
+        setattr(item, field, value)
+
+    needs_push = item.source == "Discogs" and _DISCOGS_FIELDS & changed.keys()
+    if needs_push:
+        item.discogs_dirty = True
+        item.discogs_sync_error = ""
+    await db.commit()
+
+    db_name = _db_name(current_user)
+    await get_inventory_service(db_name).reload()
+
+    if needs_push:
+        token = await _company_discogs_token(db)
+        if token:
+            await discogs_push_worker.trigger_if_idle(db_name, token)
+    return {"ok": True}
+
+
+# ── Sincronizzazione modifiche verso Discogs (coda in background) ──────────────
+
+@router.get("/discogs-push-status")
+async def discogs_push_status(current_user: User = Depends(get_current_user),
+                              db: AsyncSession = Depends(get_db)):
+    db_name = _db_name(current_user)
+    pending = (await db.execute(
+        select(func.count()).select_from(InventoryItem).where(
+            InventoryItem.source == "Discogs",
+            InventoryItem.discogs_dirty.is_(True),
+        )
+    )).scalar_one()
+    st = discogs_push_worker.read_state(db_name)
+    return {
+        "pending": pending,
+        "running": discogs_push_worker.is_running(db_name),
+        "processed": st.get("processed", 0),
+        "total": st.get("total", 0),
+        "errors": st.get("errors", 0),
+    }
+
+
+@router.post("/discogs-push-stop")
+async def discogs_push_stop(current_user: User = Depends(get_current_user)):
+    discogs_push_worker.request_stop(_db_name(current_user))
+    return {"ok": True}

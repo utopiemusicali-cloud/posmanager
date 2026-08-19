@@ -22,7 +22,7 @@ _REQUIRED = ["source", "listing_id", "artist", "title", "label", "catno",
              "format", "price", "listed", "media_condition", "sleeve_condition",
              "location", "external_id", "comments", "quantity", "status", "release_id"]
 
-_OUT_COLS = _REQUIRED + ["genre", "style", "year", "media_type"]
+_OUT_COLS = _REQUIRED + ["genre", "style", "year", "media_type", "costo_unitario"]
 
 _SEARCH_COLS = ["listing_id", "artist", "title", "label", "catno",
                 "format", "external_id", "comments", "location"]
@@ -97,6 +97,7 @@ async def _load_from_db(session_maker: async_sessionmaker, meta: dict[str, dict]
             "quantity": item.quantity or 0,
             "status": item.status or "",
             "release_id": rid,
+            "costo_unitario": f"{item.costo_unitario}" if item.costo_unitario is not None else "",
             "_item_genere": item.genere or "",
             "_item_stile": item.stile or "",
             "_item_year": item.year or "",

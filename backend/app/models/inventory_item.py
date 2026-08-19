@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import DateTime, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, DateTime, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -46,6 +46,12 @@ class InventoryItem(Base):
 
     costo_unitario: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
     url_discogs: Mapped[str] = mapped_column(String(500), default="")
+
+    # Coda push verso Discogs: True quando un campo modificato in tabella
+    # (source="Discogs") non è ancora stato rimandato all'inserzione reale
+    # sul marketplace. Vedi app/services/discogs_push_worker.py.
+    discogs_dirty: Mapped[bool] = mapped_column(Boolean, default=False)
+    discogs_sync_error: Mapped[str] = mapped_column(Text, default="")
 
     created_at: Mapped[str] = mapped_column(
         DateTime, server_default=func.now()
