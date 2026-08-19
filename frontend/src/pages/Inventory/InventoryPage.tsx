@@ -11,6 +11,7 @@ type Row = Record<string, string>
 
 interface FacetItem { value: string; count: number; label?: string; min?: number; max?: number }
 interface Facets {
+  sources: FacetItem[]
   media_types: FacetItem[]
   format_desc: FacetItem[]
   price_ranges: FacetItem[]
@@ -23,6 +24,7 @@ interface Facets {
 }
 
 interface FilterState {
+  source?: string
   media_type?: string
   format_desc?: string
   media_condition?: string
@@ -95,6 +97,7 @@ const groupedColumns: ColumnType<Row>[] = [
 async function getInventory(status: string, q: string, filters: FilterState, sort: string, page: number, facets?: Facets) {
   const params: Record<string, unknown> = { status, page, page_size: 100, sort }
   if (q) params.q = q
+  if (filters.source) params.source = filters.source
   if (filters.media_type) params.media_type = filters.media_type
   if (filters.format_desc) params.format_desc = filters.format_desc
   if (filters.media_condition) params.media_condition = filters.media_condition
@@ -195,6 +198,9 @@ function InventoryTable({ status }: { status: string }) {
 
       {/* Barra facet */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
+        <Select placeholder="Fonte" style={selStyle} allowClear showSearch
+          value={filters.source} onChange={(v) => setF('source', v)}
+          options={opts(facets?.sources ?? [])} />
         <Select placeholder="Format" style={selStyle} allowClear showSearch
           value={filters.media_type} onChange={(v) => setF('media_type', v)}
           options={opts(facets?.media_types ?? [])} />

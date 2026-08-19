@@ -68,6 +68,7 @@ _LOCATIONS = ["UNOFF", "OS Records", "Deposito"]
 @router.get("")
 async def get_inventory(
     status: str | None = None,
+    source: str | None = None,
     q: str | None = None,
     media_type: str | None = None,
     format_desc: str | None = None,
@@ -88,7 +89,7 @@ async def get_inventory(
     svc = get_inventory_service(_db_name(current_user))
     await _sync_meta(svc, db)
     filters = {
-        "status": status, "q": q, "media_type": media_type,
+        "status": status, "source": source, "q": q, "media_type": media_type,
         "format_desc": format_desc, "media_condition": media_condition,
         "sleeve_condition": sleeve_condition, "location": location,
         "genre": genre, "style": style, "year": year,

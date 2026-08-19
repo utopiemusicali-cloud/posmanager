@@ -184,6 +184,8 @@ class InventoryService:
 
         if f.get("status"):
             mask &= df["status"].str.lower() == f["status"].lower()
+        if f.get("source"):
+            mask &= df["source"] == f["source"]
         if f.get("q"):
             mask &= df["_blob"].str.contains(f["q"].lower().strip(), regex=False, na=False)
         if f.get("media_type"):
@@ -257,6 +259,7 @@ class InventoryService:
                 price_facets.append({"value": key, "label": label, "count": cnt, "min": lo, "max": hi})
 
         return {
+            "sources": vc("source"),
             "media_types": vc("media_type"),
             "format_desc": vc_explode("format"),
             "price_ranges": price_facets,
