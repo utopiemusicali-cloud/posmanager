@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user
 from app.config import settings
-from app.database import get_db
+from app.database import get_company_session_maker, get_db
 from app.models.company_settings import CompanySettings
 from app.models.inventory_item import InventoryItem
 from app.models.release_meta import ReleaseMeta
@@ -21,6 +21,7 @@ from app.services import enrich_worker
 from app.services.discogs_scraper_service import DiscogsScraper
 from app.services.discogs_lookup_service import lookup_release
 from app.services.discogs_sync_service import sync_inventory
+from app.services.inventory_import_service import import_discogs_csv
 from app.services.inventory_service import InventoryService, get_inventory_service
 
 router = APIRouter(
@@ -62,30 +63,7 @@ _SLEEVE_CONDITIONS = _MEDIA_CONDITIONS + ["Generic", "Not Graded", "No Cover"]
 _LOCATIONS = ["UNOFF", "OS Records", "Deposito"]
 
 
-# ── GET inventory (CSV + MySQL merged) ────────────────────────────────────────
-
-def _item_to_dict(item: InventoryItem) -> dict:
-    return {
-        "source": item.source,
-        "listing_id": item.listing_id,
-        "artist": item.artist,
-        "title": item.title,
-        "label": item.label,
-        "catno": item.catno,
-        "format": item.format,
-        "price": str(item.price) if item.price else "",
-        "listed": item.listed,
-        "media_condition": item.media_condition,
-        "sleeve_condition": item.sleeve_condition,
-        "location": item.location,
-        "external_id": item.external_id,
-        "comments": item.comments,
-        "add_date": item.add_date,
-        "quantity": item.quantity,
-        "status": item.status,
-        "release_id": str(item.release_id) if item.release_id else "",
-    }
-
+# ── GET inventory (da MySQL, inventory_items) ──────────────────────────────────
 
 @router.get("")
 async def get_inventory(
@@ -182,6 +160,8 @@ async def enrich_stop(current_user: User = Depends(get_current_user)):
 
 @router.post("/sync")
 async def sync_from_discogs(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Scarica l'export Discogs, ne salva sempre una copia CSV su disco
+    (archivio per-azienda) e importa i listing nel DB (inventory_items)."""
     db_name = _db_name(current_user)
     token = await _company_discogs_token(db)
     if not token:
@@ -193,8 +173,12 @@ async def sync_from_discogs(current_user: User = Depends(get_current_user), db: 
         raise HTTPException(504, str(e))
     except Exception as e:
         raise HTTPException(502, f"Errore Discogs API: {e}")
+
+    csv_path = os.path.join(csv_dir, result["filename"])
+    import_stats = await import_discogs_csv(get_company_session_maker(db_name), csv_path)
+
     await get_inventory_service(db_name).reload()
-    return result
+    return {**result, **import_stats}
 
 
 # ── Lookup release da URL Discogs ──────────────────────────────────────────────

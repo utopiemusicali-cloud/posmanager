@@ -1,20 +1,21 @@
-"""Servizio inventario: CSV Discogs + metadati Genre/Style/Year.
+"""Servizio inventario: query MySQL (inventory_items) + metadati Genre/Style/Year.
 Ricerca vettorizzata, filtri facet, facets con conteggi.
 
-Multi-tenant: ogni azienda ha la propria sotto-cartella CSV
-(INVENTORY_CSV_DIR/{db_name}/) per evitare di mischiare gli export
-Discogs di aziende diverse. Vedi get_inventory_service().
+Multi-tenant: ogni azienda ha il proprio DB (già isolato dal routing JWT),
+quindi ogni InventoryService legge solo la tabella inventory_items della
+propria azienda. Vedi get_inventory_service().
 """
 from __future__ import annotations
 
 import asyncio
-import glob
-import os
 from typing import Any
 
 import pandas as pd
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.config import settings
+from app.database import get_company_session_maker
+from app.models.inventory_item import InventoryItem
 
 _REQUIRED = ["source", "listing_id", "artist", "title", "label", "catno",
              "format", "price", "listed", "media_condition", "sleeve_condition",
@@ -52,34 +53,52 @@ def _media_type(fmt: str) -> str:
     return "Altro"
 
 
-def _load_sync(csv_dir: str, meta: dict[str, dict]) -> pd.DataFrame:
-    csvs = sorted(glob.glob(os.path.join(csv_dir, "*.csv")), key=os.path.getmtime, reverse=True)
-    if not csvs:
+async def _load_from_db(session_maker: async_sessionmaker, meta: dict[str, dict]) -> pd.DataFrame:
+    async with session_maker() as db:
+        rows = (await db.execute(select(InventoryItem))).scalars().all()
+
+    if not rows:
         return pd.DataFrame(columns=_OUT_COLS + ["_blob", "_price"])
 
-    df = pd.read_csv(csvs[0], dtype=str)
-    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
-    df["source"] = "Discogs"
+    records = []
+    for item in rows:
+        rid = str(item.release_id) if item.release_id else ""
+        records.append({
+            "source": item.source or "",
+            "listing_id": item.listing_id or "",
+            "artist": item.artist or "",
+            "title": item.title or "",
+            "label": item.label or "",
+            "catno": item.catno or "",
+            "format": item.format or "",
+            "price": f"{item.price}" if item.price is not None else "",
+            "listed": item.listed or "",
+            "media_condition": item.media_condition or "",
+            "sleeve_condition": item.sleeve_condition or "",
+            "location": item.location or "",
+            "external_id": item.external_id or "",
+            "comments": item.comments or "",
+            "quantity": item.quantity or 0,
+            "status": item.status or "",
+            "release_id": rid,
+            "_item_genere": item.genere or "",
+            "_item_stile": item.stile or "",
+            "_item_year": item.year or "",
+        })
 
-    if "status" in df.columns:
-        df["status"] = df["status"].fillna("").str.strip()
+    df = pd.DataFrame.from_records(records)
 
     if "listed" in df.columns:
         df["_dt"] = pd.to_datetime(df["listed"], errors="coerce")
         df = df.sort_values("_dt", ascending=False, na_position="last").drop(columns=["_dt"])
 
-    for col in _REQUIRED:
-        if col not in df.columns:
-            df[col] = ""
-    df = df.fillna("")
-
     # Prezzo numerico
-    df["_price"] = pd.to_numeric(df["price"].str.replace(",", ".", regex=False), errors="coerce").fillna(0.0)
+    df["_price"] = pd.to_numeric(df["price"], errors="coerce").fillna(0.0)
 
     # Tipo supporto
     df["media_type"] = df["format"].apply(_media_type)
 
-    # Merge metadati Genre/Style/Year dal dict in memoria (caricato da DB)
+    # Merge metadati Genre/Style/Year dal dict in memoria (caricato da release_meta)
     if meta:
         df["genre"] = df["release_id"].map(lambda r: meta.get(str(r), {}).get("genre", ""))
         df["style"] = df["release_id"].map(lambda r: meta.get(str(r), {}).get("style", ""))
@@ -88,6 +107,12 @@ def _load_sync(csv_dir: str, meta: dict[str, dict]) -> pd.DataFrame:
         df["genre"] = ""
         df["style"] = ""
         df["year"] = ""
+
+    # Fallback sui valori inseriti a mano quando release_meta non ha (ancora) arricchito
+    df["genre"] = df["genre"].where(df["genre"] != "", df["_item_genere"])
+    df["style"] = df["style"].where(df["style"] != "", df["_item_stile"])
+    df["year"] = df["year"].where(df["year"] != "", df["_item_year"])
+    df = df.drop(columns=["_item_genere", "_item_stile", "_item_year"])
 
     # Blob ricerca
     blob_cols = [c for c in _SEARCH_COLS if c in df.columns]
@@ -110,10 +135,11 @@ def _explode_counts(series: pd.Series) -> dict[str, int]:
 
 
 class InventoryService:
-    """Un'istanza per azienda (csv_dir dedicata). Vedi get_inventory_service()."""
+    """Un'istanza per azienda (DB dedicato). Vedi get_inventory_service()."""
 
-    def __init__(self, csv_dir: str) -> None:
-        self._csv_dir = csv_dir
+    def __init__(self, db_name: str) -> None:
+        self._db_name = db_name
+        self._session_maker = get_company_session_maker(db_name)
         self._df: pd.DataFrame | None = None
         self._meta: dict[str, dict] = {}
         self._lock = asyncio.Lock()
@@ -121,8 +147,7 @@ class InventoryService:
     async def _ensure_loaded(self) -> pd.DataFrame:
         async with self._lock:
             if self._df is None:
-                loop = asyncio.get_event_loop()
-                self._df = await loop.run_in_executor(None, _load_sync, self._csv_dir, self._meta)
+                self._df = await _load_from_db(self._session_maker, self._meta)
         return self._df
 
     async def reload(self) -> None:
@@ -244,9 +269,7 @@ _instances: dict[str, InventoryService] = {}
 
 
 def get_inventory_service(db_name: str) -> InventoryService:
-    """Restituisce (creando se serve) l'InventoryService dedicato all'azienda.
-    Ogni azienda ha una sotto-cartella propria: INVENTORY_CSV_DIR/{db_name}/."""
+    """Restituisce (creando se serve) l'InventoryService dedicato all'azienda."""
     if db_name not in _instances:
-        csv_dir = os.path.join(settings.INVENTORY_CSV_DIR, db_name)
-        _instances[db_name] = InventoryService(csv_dir)
+        _instances[db_name] = InventoryService(db_name)
     return _instances[db_name]
