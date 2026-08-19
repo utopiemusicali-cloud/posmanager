@@ -54,6 +54,21 @@ def _media_type(fmt: str) -> str:
     return "Altro"
 
 
+def _parse_listed(series: pd.Series) -> pd.Series:
+    """Il campo 'listed' mescola due formati: ISO da Discogs
+    (2025-01-14 05:42:36) e italiano dagli articoli aggiunti a mano dal POS
+    (14/01/2025 10:30). Prova i formati noti espliciti prima di lasciare
+    che pandas indovini, altrimenti l'ambiguità giorno/mese sballa il sort."""
+    dt = pd.to_datetime(series, format="%Y-%m-%d %H:%M:%S", errors="coerce")
+    missing = dt.isna() & (series != "")
+    if missing.any():
+        dt.loc[missing] = pd.to_datetime(series[missing], format="%d/%m/%Y %H:%M", errors="coerce")
+    missing = dt.isna() & (series != "")
+    if missing.any():
+        dt.loc[missing] = pd.to_datetime(series[missing], errors="coerce")
+    return dt
+
+
 async def _load_from_db(session_maker: async_sessionmaker, meta: dict[str, dict]) -> pd.DataFrame:
     async with session_maker() as db:
         rows = (await db.execute(select(InventoryItem))).scalars().all()
@@ -90,7 +105,7 @@ async def _load_from_db(session_maker: async_sessionmaker, meta: dict[str, dict]
     df = pd.DataFrame.from_records(records)
 
     if "listed" in df.columns:
-        df["_dt"] = pd.to_datetime(df["listed"], errors="coerce")
+        df["_dt"] = _parse_listed(df["listed"])
         df = df.sort_values("_dt", ascending=False, na_position="last").drop(columns=["_dt"])
 
     # Prezzo numerico
