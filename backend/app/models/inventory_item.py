@@ -15,11 +15,13 @@ class InventoryItem(Base):
     mode: Mapped[str] = mapped_column(String(20))  # "nod_unoff" | "inv_os"
     source: Mapped[str] = mapped_column(String(30))  # "NOD-UnOff" | "OS Records"
 
-    artist: Mapped[str] = mapped_column(String(255), default="")
-    title: Mapped[str] = mapped_column(String(255), default="")
-    label: Mapped[str] = mapped_column(String(255), default="")
-    catno: Mapped[str] = mapped_column(String(100), default="")
-    format: Mapped[str] = mapped_column(String(100), default="")
+    # Testo libero (non vocabolario controllato): alcuni listing Discogs ci
+    # incollano blob lunghi (l'intera descrizione della release) -> TEXT.
+    artist: Mapped[str] = mapped_column(Text, default="")
+    title: Mapped[str] = mapped_column(Text, default="")
+    label: Mapped[str] = mapped_column(Text, default="")
+    catno: Mapped[str] = mapped_column(Text, default="")
+    format: Mapped[str] = mapped_column(Text, default="")
     release_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     status: Mapped[str] = mapped_column(String(20), default="For Sale")
@@ -29,10 +31,10 @@ class InventoryItem(Base):
     media_condition: Mapped[str] = mapped_column(String(100), default="")
     sleeve_condition: Mapped[str] = mapped_column(String(100), default="")
     accept_offer: Mapped[str] = mapped_column(String(1), default="N")
-    external_id: Mapped[str] = mapped_column(Text, default="")  # libero: alcuni listing Discogs ci mettono blob lunghi
+    external_id: Mapped[str] = mapped_column(Text, default="")
     weight: Mapped[int | None] = mapped_column(Integer, nullable=True)
     format_quantity: Mapped[int] = mapped_column(Integer, default=0)
-    location: Mapped[str] = mapped_column(String(100), default="")
+    location: Mapped[str] = mapped_column(Text, default="")
     quantity: Mapped[int] = mapped_column(Integer, default=1)
 
     country: Mapped[str] = mapped_column(String(100), default="")
