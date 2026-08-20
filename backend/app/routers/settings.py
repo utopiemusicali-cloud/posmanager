@@ -57,6 +57,10 @@ class IntegrationsRead(BaseModel):
     sumup_api_key: str | None
     sumup_merchant_code: str | None
     paypal_client_id: str | None
+    paypal_sandbox: bool = True
+    # Il secret non viene mai restituito: l'interfaccia deve solo sapere se
+    # e' stato configurato, per non riesporlo a ogni apertura della pagina.
+    paypal_secret_set: bool = False
     currency: str
 
     model_config = {"from_attributes": True}
@@ -68,7 +72,22 @@ class IntegrationsUpdate(BaseModel):
     sumup_api_key: str | None = None
     sumup_merchant_code: str | None = None
     paypal_client_id: str | None = None
+    paypal_client_secret: str | None = None
+    paypal_sandbox: bool | None = None
     currency: str | None = None
+
+
+def _to_read(row: CompanySettings) -> IntegrationsRead:
+    return IntegrationsRead(
+        discogs_token=row.discogs_token,
+        discogs_username=row.discogs_username,
+        sumup_api_key=row.sumup_api_key,
+        sumup_merchant_code=row.sumup_merchant_code,
+        paypal_client_id=row.paypal_client_id,
+        paypal_sandbox=bool(row.paypal_sandbox),
+        paypal_secret_set=bool(row.paypal_client_secret),
+        currency=row.currency,
+    )
 
 
 async def _get_or_create_integrations(db: AsyncSession) -> CompanySettings:
@@ -86,7 +105,7 @@ async def get_integrations(
     db: AsyncSession = Depends(get_db),
     _admin=Depends(require_admin),
 ):
-    return await _get_or_create_integrations(db)
+    return _to_read(await _get_or_create_integrations(db))
 
 
 @router.put("/integrations", response_model=IntegrationsRead)
@@ -96,8 +115,12 @@ async def update_integrations(
     _admin=Depends(require_admin),
 ):
     row = await _get_or_create_integrations(db)
-    for k, v in payload.model_dump(exclude_none=True).items():
+    # exclude_unset (non exclude_none): con exclude_none un flag booleano
+    # messo a False verrebbe scartato, rendendo impossibile disattivarlo.
+    for k, v in payload.model_dump(exclude_unset=True).items():
+        if v is None:
+            continue
         setattr(row, k, v)
     await db.flush()
     await db.refresh(row)
-    return row
+    return _to_read(row)

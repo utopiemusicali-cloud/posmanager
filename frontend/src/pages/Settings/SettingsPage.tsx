@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Card, Form, Input, Select, Button, message, Typography, Divider, Row, Col, Alert,
+  Switch, Space, Tag,
 } from 'antd'
 import { SaveOutlined, ApiOutlined } from '@ant-design/icons'
 import client from '@/api/client'
@@ -30,6 +31,8 @@ interface Integrations {
   sumup_api_key: string | null
   sumup_merchant_code: string | null
   paypal_client_id: string | null
+  paypal_sandbox: boolean
+  paypal_secret_set: boolean
   currency: string
 }
 
@@ -66,6 +69,22 @@ export default function SettingsPage() {
       message.success('Impostazioni salvate')
     },
     onError: () => message.error('Errore nel salvataggio'),
+  })
+
+  const testPaypalMut = useMutation({
+    mutationFn: async () => (await client.post('/api/v1/integrations/paypal/test')).data,
+    onSuccess: (d) => message.success(`Credenziali PayPal valide (${d.ambiente})`),
+    onError: (e: any) =>
+      message.error(e?.response?.data?.detail ?? 'Verifica PayPal fallita'),
+  })
+
+  const syncPaypalMut = useMutation({
+    mutationFn: async () =>
+      (await client.post('/api/v1/integrations/paypal/sync', null, { params: { days: 90 } })).data,
+    onSuccess: (d) =>
+      message.success(`${d.imported} transazioni PayPal importate (${d.dal} → ${d.al})`),
+    onError: (e: any) =>
+      message.error(e?.response?.data?.detail ?? 'Importazione PayPal fallita'),
   })
 
   const saveIntMut = useMutation({
@@ -213,7 +232,19 @@ export default function SettingsPage() {
       </Title>
 
       <Card loading={intLoading}>
-        <Form form={intForm} layout="vertical" onFinish={saveIntMut.mutate}>
+        <Form
+          form={intForm}
+          layout="vertical"
+          onFinish={(values) => {
+            // Il secret non viene mai rimostrato: un campo lasciato vuoto
+            // significa "non toccarlo", non "cancellalo". Senza questo,
+            // salvare le altre impostazioni azzererebbe il secret salvato.
+            const { paypal_client_secret, ...rest } = values
+            saveIntMut.mutate(
+              paypal_client_secret ? { ...rest, paypal_client_secret } : rest,
+            )
+          }}
+        >
           <Divider orientation="left">Discogs</Divider>
           <Alert
             type="info"
@@ -254,9 +285,52 @@ export default function SettingsPage() {
           </Row>
 
           <Divider orientation="left">PayPal</Divider>
-          <Form.Item label="PayPal Client ID" name="paypal_client_id">
-            <Input placeholder="AXxx..." />
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="L'importazione richiede che l'app PayPal abbia abilitata la voce
+                     «Transaction Search» nel developer dashboard, altrimenti PayPal
+                     risponde 403 anche con credenziali corrette."
+          />
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item label="PayPal Client ID" name="paypal_client_id">
+                <Input placeholder="AXxx..." autoComplete="off" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                label={
+                  <Space>
+                    <span>PayPal Secret</span>
+                    {intData?.paypal_secret_set && <Tag color="green">configurato</Tag>}
+                  </Space>
+                }
+                name="paypal_client_secret"
+                extra="Per motivi di sicurezza non viene mai rimostrato. Lascia vuoto per non modificarlo."
+              >
+                <Input.Password placeholder={intData?.paypal_secret_set ? '••••••••' : 'EDxx...'} autoComplete="new-password" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item
+            label="Ambiente sandbox"
+            name="paypal_sandbox"
+            valuePropName="checked"
+            extra="Attivo = ambiente di prova PayPal. Disattivalo solo con credenziali di produzione."
+          >
+            <Switch checkedChildren="Sandbox" unCheckedChildren="Produzione" />
           </Form.Item>
+          <Space style={{ marginBottom: 16 }}>
+            <Button icon={<ApiOutlined />} onClick={() => testPaypalMut.mutate()}
+                    loading={testPaypalMut.isPending}>
+              Verifica connessione
+            </Button>
+            <Button onClick={() => syncPaypalMut.mutate()} loading={syncPaypalMut.isPending}>
+              Importa transazioni (90 giorni)
+            </Button>
+          </Space>
 
           <Form.Item style={{ marginBottom: 0 }}>
             <Button

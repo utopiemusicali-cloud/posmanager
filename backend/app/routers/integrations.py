@@ -1,16 +1,19 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, require_not_viewer
 from app.config import settings
 from app.database import get_db
 from app.models.company_settings import CompanySettings
+from app.models.digital_transaction import DigitalTransaction
+from app.services import paypal_service
 from app.services.discogs_orders_service import (
     ORDER_STATUSES, cancel_order, fetch_all_orders, fetch_orders,
     get_order_messages, mark_as_shipped,
@@ -175,6 +178,71 @@ async def sync_sumup():
     return {"status": "not_implemented"}
 
 
-@router.get("/paypal/sync")
-async def sync_paypal():
-    return {"status": "not_implemented"}
+# ── PayPal: importazione transazioni (sola lettura) ───────────────────────────
+
+async def _paypal_credentials(db: AsyncSession) -> tuple[str, str, bool]:
+    cs = (await db.execute(select(CompanySettings))).scalars().first()
+    client_id = cs.paypal_client_id if cs else None
+    secret = cs.paypal_client_secret if cs else None
+    if not client_id or not secret:
+        raise HTTPException(
+            400,
+            "Credenziali PayPal non configurate. Vai su Impostazioni > Integrazioni "
+            "e inserisci Client ID e Secret.",
+        )
+    return client_id, secret, bool(cs.paypal_sandbox)
+
+
+@router.post("/paypal/test")
+async def test_paypal(db: AsyncSession = Depends(get_db), _=Depends(require_not_viewer)):
+    """Verifica che le credenziali siano valide, senza importare nulla."""
+    client_id, secret, sandbox = await _paypal_credentials(db)
+    try:
+        await paypal_service.get_access_token(client_id, secret, sandbox)
+    except paypal_service.PayPalError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Errore di rete verso PayPal: {e}")
+    return {"ok": True, "ambiente": "sandbox" if sandbox else "produzione"}
+
+
+@router.post("/paypal/sync")
+async def sync_paypal(
+    days: int = Query(30, ge=1, le=1095),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_not_viewer),
+):
+    """Importa le transazioni PayPal degli ultimi `days` giorni in
+    digital_transactions. Idempotente: il vincolo di unicita' su
+    (fonte, transaction_id) fa sì che rilanciarlo aggiorni invece di duplicare.
+    PayPal conserva lo storico per circa 3 anni, da cui il limite su days."""
+    client_id, secret, sandbox = await _paypal_credentials(db)
+
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=days)
+    try:
+        transactions = await paypal_service.fetch_transactions(
+            client_id, secret, sandbox, start, end
+        )
+    except paypal_service.PayPalError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Errore durante la lettura da PayPal: {e}")
+
+    for tx in transactions:
+        stmt = (
+            mysql_insert(DigitalTransaction)
+            .values(**tx)
+            .on_duplicate_key_update(
+                **{k: v for k, v in tx.items() if k not in ("fonte", "transaction_id")}
+            )
+        )
+        await db.execute(stmt)
+    await db.commit()
+
+    return {
+        "imported": len(transactions),
+        "ambiente": "sandbox" if sandbox else "produzione",
+        "dal": start.date().isoformat(),
+        "al": end.date().isoformat(),
+    }
