@@ -94,6 +94,20 @@ async def _migrate_company_db(conn) -> None:
                 f"ALTER TABLE daily_closures ADD COLUMN {col_name} {col_def}"
             ))
 
+    # Flag ambiente PayPal. create_all crea le tabelle mancanti ma non le
+    # colonne nuove su tabelle gia' esistenti: senza questa migrazione la
+    # colonna arriverebbe solo ai DB creati da zero.
+    pp_exists = (await conn.execute(text(
+        "SELECT COUNT(*) FROM information_schema.COLUMNS "
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'company_settings_integrations' "
+        "AND COLUMN_NAME = 'paypal_sandbox'"
+    ))).scalar()
+    if not pp_exists:
+        await conn.execute(text(
+            "ALTER TABLE company_settings_integrations "
+            "ADD COLUMN paypal_sandbox TINYINT(1) NOT NULL DEFAULT 1"
+        ))
+
     # metodo_pagamento su shop_receipts: allarga a VARCHAR(128)
     mp_size = (await conn.execute(text(
         "SELECT CHARACTER_MAXIMUM_LENGTH FROM information_schema.COLUMNS "
