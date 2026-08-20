@@ -35,16 +35,25 @@ export const useAuthStore = create<AuthState>()(
       viewingCompany: null,
       viewingCompanyId: null,
 
+      // NB: in tutti i metodi qui sotto queryClient.clear() va chiamato PRIMA
+      // di set(). Invertendo l'ordine, set() fa montare le pagine che lanciano
+      // subito le query, e il clear() successivo le cancella mentre sono in
+      // volo: nessun re-render le rimette in moto e la pagina resta vuota
+      // finche' non si ricarica a mano. Con clear() prima, e' il set() finale
+      // a garantire il re-render che popola la cache pulita.
+
       login: (token, username) => {
         const payload = decodeJwtPayload(token)
+        // Dati della sessione precedente (altro utente/azienda) via prima
+        // che le pagine della nuova sessione montino.
+        queryClient.clear()
         set({ token, username, role: (payload.role as string) ?? null,
               superadminToken: null, viewingCompany: null, viewingCompanyId: null })
-        // Svuota la cache: dati della sessione precedente (altro utente/azienda)
-        // non devono restare visibili dopo il login.
-        queryClient.clear()
       },
 
       switchToCompany: (viewToken, companyName, companyId) => {
+        // Cambio azienda: la cache contiene dati dell'azienda precedente.
+        queryClient.clear()
         set({
           superadminToken: get().token,
           token: viewToken,
@@ -52,12 +61,11 @@ export const useAuthStore = create<AuthState>()(
           viewingCompanyId: companyId,
           role: 'viewer',
         })
-        // Cambio azienda: la cache contiene dati dell'azienda precedente.
-        queryClient.clear()
       },
 
       exitCompanyView: () => {
         const { superadminToken } = get()
+        queryClient.clear()
         set({
           token: superadminToken,
           superadminToken: null,
@@ -65,15 +73,14 @@ export const useAuthStore = create<AuthState>()(
           viewingCompanyId: null,
           role: 'superadmin',
         })
-        queryClient.clear()
       },
 
       logout: () => {
+        queryClient.clear()
         set({
           token: null, username: null, role: null,
           superadminToken: null, viewingCompany: null, viewingCompanyId: null,
         })
-        queryClient.clear()
       },
     }),
     { name: 'posmanager-auth' },

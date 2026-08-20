@@ -219,6 +219,32 @@ async def _seed_main_db() -> None:
             print("[startup] company_settings_integrations creata con token Discogs da env.")
 
 
+async def _sync_all_company_schemas() -> None:
+    """Allinea lo schema di OGNI DB aziendale, non solo quello di default.
+
+    Senza questo passaggio una tabella o una colonna nuova arriva solo al
+    tenant di default: gli altri continuano a girare con lo schema vecchio e
+    vanno in errore al primo accesso, finche' qualcuno non lancia le ALTER a
+    mano. Con create_all + _migrate_company_db su tutti, un deploy allinea
+    l'intera flotta da solo.
+    """
+    default_db = settings.default_company_db
+    async with MainSessionLocal() as db:
+        companies = (await db.execute(select(Company))).scalars().all()
+
+    for company in companies:
+        if not company.db_name or company.db_name == default_db:
+            continue  # il default e' gia' stato allineato allo step 3
+        try:
+            async with get_company_engine(company.db_name).begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+                await _migrate_company_db(conn)
+        except Exception as e:
+            # Un tenant con DB irraggiungibile non deve impedire l'avvio
+            # dell'applicazione per tutti gli altri.
+            print(f"[startup] schema sync fallito per {company.db_name}: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── Startup ──────────────────────────────────────────────────────────────
@@ -237,6 +263,9 @@ async def lifespan(app: FastAPI):
 
     # 4. Prima esecuzione: seed azienda + migrazione utenti
     await _seed_main_db()
+
+    # 4b. Allinea lo schema di tutti gli altri DB aziendali
+    await _sync_all_company_schemas()
 
     # 5. Crea/aggiorna superadmin se configurato in env
     if settings.SUPERADMIN_USERNAME and settings.SUPERADMIN_PASSWORD:

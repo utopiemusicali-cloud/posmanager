@@ -15,6 +15,7 @@ from app.models.digital_transaction import DigitalTransaction
 from app.models.deletion_log import DeletionLog
 from app.models.cost_center import CostCenter
 from app.models.inventory_item import InventoryItem
+from app.models.inventory_event import InventoryEvent
 from app.models.release_meta import ReleaseMeta
 from app.models.release_sales import ReleaseSales
 from app.models.receipt_payment import ReceiptPayment
@@ -40,6 +41,7 @@ __all__ = [
     "DeletionLog",
     "CostCenter",
     "InventoryItem",
+    "InventoryEvent",
     "ReleaseMeta",
     "ReleaseSales",
     "ReceiptPayment",

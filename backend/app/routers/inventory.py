@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -13,11 +13,12 @@ from app.auth.dependencies import get_current_user
 from app.config import settings
 from app.database import get_company_session_maker, get_db
 from app.models.company_settings import CompanySettings
+from app.models.inventory_event import InventoryEvent
 from app.models.inventory_item import InventoryItem
 from app.models.release_meta import ReleaseMeta
 from app.models.release_sales import ReleaseSales
 from app.models.user import User
-from app.services import discogs_push_worker, enrich_worker
+from app.services import discogs_push_worker, enrich_worker, inventory_event_service
 from app.services.discogs_scraper_service import DiscogsScraper
 from app.services.discogs_lookup_service import lookup_release
 from app.services.discogs_sync_service import sync_inventory
@@ -445,7 +446,9 @@ class AddInventoryItem(BaseModel):
 
 
 @router.post("/items")
-async def add_inventory_item(body: AddInventoryItem, db: AsyncSession = Depends(get_db)):
+async def add_inventory_item(body: AddInventoryItem,
+                             current_user: User = Depends(get_current_user),
+                             db: AsyncSession = Depends(get_db)):
     # Verifica che listing_id non esista già
     existing = await db.execute(
         select(InventoryItem).where(InventoryItem.listing_id == body.listing_id)
@@ -485,6 +488,11 @@ async def add_inventory_item(body: AddInventoryItem, db: AsyncSession = Depends(
         costo_unitario=body.costo_unitario,
     )
     db.add(item)
+    await inventory_event_service.record_simple(
+        db, listing_id=body.listing_id, event_type="created", source="ui",
+        user_id=current_user.id, username=current_user.username,
+        note=f"{source} · {body.artist} — {body.title}".strip(" ·"),
+    )
     await db.commit()
     await db.refresh(item)
     return {"id": item.id, "listing_id": item.listing_id}
@@ -524,10 +532,23 @@ async def update_inventory_item(
         raise HTTPException(404, "Articolo non trovato")
 
     changed = body.model_dump(exclude_unset=True)
+
+    # Il diff va calcolato PRIMA di applicare le modifiche, altrimenti
+    # confronterebbe ogni valore con se stesso.
+    diffs = inventory_event_service.diff_fields(item, changed)
     for field, value in changed.items():
         setattr(item, field, value)
 
-    needs_push = item.source == "Discogs" and _DISCOGS_FIELDS & changed.keys()
+    if diffs:
+        await inventory_event_service.record(
+            db, listing_id=listing_id, changes=diffs, source="ui",
+            user_id=current_user.id, username=current_user.username,
+        )
+
+    # Si spinge a Discogs solo se un campo rilevante è cambiato davvero:
+    # un salvataggio che non modifica nulla non deve consumare quota API.
+    touched = {f for f, _, _ in diffs}
+    needs_push = item.source == "Discogs" and bool(_DISCOGS_FIELDS & touched)
     if needs_push:
         item.discogs_dirty = True
         item.discogs_sync_error = ""
@@ -541,6 +562,60 @@ async def update_inventory_item(
         if token:
             await discogs_push_worker.trigger_if_idle(db_name, token)
     return {"ok": True}
+
+
+# ── Storico modifiche (inventory_events) ──────────────────────────────────────
+
+@router.get("/items/{listing_id}/history")
+async def get_item_history(listing_id: str, limit: int = Query(200, ge=1, le=1000),
+                            db: AsyncSession = Depends(get_db)):
+    """Cronologia completa di un singolo articolo, dal più recente."""
+    return {"events": await inventory_event_service.history_for(db, listing_id, limit)}
+
+
+@router.get("/events")
+async def get_events(
+    event_type: str | None = None,
+    field: str | None = None,
+    source: str | None = None,
+    listing_id: str | None = None,
+    days: int | None = Query(None, ge=1, le=3650),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+):
+    """Feed globale degli eventi dell'azienda, con filtri. Usato dalla vista
+    'Storico' per rispondere a domande tipo 'cosa è stato venduto questa
+    settimana' o 'chi ha ritoccato i prezzi'."""
+    stmt = select(InventoryEvent)
+    count_stmt = select(func.count()).select_from(InventoryEvent)
+
+    conditions = []
+    if event_type:
+        conditions.append(InventoryEvent.event_type == event_type)
+    if field:
+        conditions.append(InventoryEvent.field == field)
+    if source:
+        conditions.append(InventoryEvent.source == source)
+    if listing_id:
+        conditions.append(InventoryEvent.listing_id == listing_id)
+    if days:
+        cutoff = datetime.now() - timedelta(days=days)
+        conditions.append(InventoryEvent.created_at >= cutoff)
+    if conditions:
+        stmt = stmt.where(*conditions)
+        count_stmt = count_stmt.where(*conditions)
+
+    total = (await db.execute(count_stmt)).scalar_one()
+    rows = (await db.execute(
+        stmt.order_by(InventoryEvent.created_at.desc(), InventoryEvent.id.desc())
+        .offset((page - 1) * page_size).limit(page_size)
+    )).scalars().all()
+
+    return {
+        "total": total, "page": page, "page_size": page_size,
+        "events": [inventory_event_service.to_dict(e) for e in rows],
+    }
 
 
 # ── Sincronizzazione modifiche verso Discogs (coda in background) ──────────────

@@ -2,10 +2,11 @@ import { useState, useEffect, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Table, Input, InputNumber, Checkbox, Tabs, Tag, Button, message, Alert, Select, Progress, Tooltip } from 'antd'
 import type { ColumnType } from 'antd/es/table'
-import { PlusOutlined, SearchOutlined, SyncOutlined, ClearOutlined, DatabaseOutlined, LineChartOutlined } from '@ant-design/icons'
+import { PlusOutlined, SearchOutlined, SyncOutlined, ClearOutlined, DatabaseOutlined, LineChartOutlined, HistoryOutlined } from '@ant-design/icons'
 import client from '@/api/client'
 import AddInventoryModal from './AddInventoryModal'
 import SalesDrawer from './SalesDrawer'
+import HistoryDrawer from './HistoryDrawer'
 
 type Row = Record<string, string>
 type EditFn = (listingId: string, patch: Record<string, unknown>) => void
@@ -212,6 +213,7 @@ function InventoryTable({ status }: { status: string }) {
   const [sort, setSort] = useState('listed_desc')
   const [page, setPage] = useState(1)
   const [salesRow, setSalesRow] = useState<Row | null>(null)
+  const [historyRow, setHistoryRow] = useState<Row | null>(null)
   const qc = useQueryClient()
 
   const { data: facets } = useQuery({
@@ -260,6 +262,15 @@ function InventoryTable({ status }: { status: string }) {
             onClick={(e) => { e.stopPropagation(); setSalesRow(r) }} />
         </Tooltip>
       ) : null,
+    },
+    {
+      title: '', key: 'history', width: 44, align: 'center' as const,
+      render: (_: unknown, r: Row) => (
+        <Tooltip title="Storico modifiche">
+          <Button size="small" type="text" icon={<HistoryOutlined />}
+            onClick={(e) => { e.stopPropagation(); setHistoryRow(r) }} />
+        </Tooltip>
+      ),
     },
   ]
 
@@ -357,6 +368,12 @@ function InventoryTable({ status }: { status: string }) {
         myAddDate={salesRow?.add_date}
         title={salesRow ? `${salesRow.artist} — ${salesRow.title}` : undefined}
         onClose={() => setSalesRow(null)}
+      />
+
+      <HistoryDrawer
+        listingId={historyRow?.listing_id ?? null}
+        title={historyRow ? `${historyRow.artist} — ${historyRow.title}` : undefined}
+        onClose={() => setHistoryRow(null)}
       />
     </div>
   )
