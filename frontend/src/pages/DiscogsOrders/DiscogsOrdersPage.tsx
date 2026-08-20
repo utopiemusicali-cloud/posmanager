@@ -707,7 +707,14 @@ export default function DiscogsOrdersPage() {
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ['discogs-orders-year', year],
     queryFn: () => loadYear(year),
-    staleTime: 5 * 60 * 1000,
+    // Gli ordini si leggono in diretta da Discogs: aprendo la pagina devono
+    // gia' essere aggiornati, senza premere "Aggiorna". Con il vecchio
+    // staleTime di 5 minuti si vedevano ordini vecchi appena rientrati.
+    // staleTime breve + refetch al mount/focus tiene la vista corrente senza
+    // rilanciare la paginazione a ogni minimo re-render.
+    staleTime: 30_000,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
   })
 
   const monthOrders = useMemo<Order[]>(() => {

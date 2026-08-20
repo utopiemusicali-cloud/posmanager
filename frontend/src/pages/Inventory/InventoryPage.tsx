@@ -102,6 +102,18 @@ interface FilterState {
   price_range?: string  // chiave del range, es "5to10"
 }
 
+function formatWhen(iso: string | null | undefined): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  const mins = Math.round((Date.now() - d.getTime()) / 60000)
+  if (mins < 1) return 'ora'
+  if (mins < 60) return `${mins} min fa`
+  const hrs = Math.round(mins / 60)
+  if (hrs < 24) return `${hrs}h fa`
+  return d.toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
 function formatDate(v: string): string {
   if (!v) return '—'
   const m = v.match(/^(\d{4})-(\d{2})-(\d{2})/)
@@ -476,6 +488,14 @@ export default function InventoryPage() {
     message.info('Sincronizzazione Discogs in arresto…')
   }
 
+  // L'inventario si aggiorna da solo in background: senza dirlo, l'utente
+  // crede che l'unico modo sia il pulsante "Aggiorna da Discogs".
+  const { data: autoSync } = useQuery({
+    queryKey: ['auto-sync-status'],
+    queryFn: async () => (await client.get('/api/v1/inventory/auto-sync-status')).data,
+    refetchInterval: 60_000,
+  })
+
   const running = enrichProg?.running
   const pct = enrichProg && enrichProg.total ? Math.round(enrichProg.enriched / enrichProg.total * 100) : 0
 
@@ -502,6 +522,19 @@ export default function InventoryPage() {
         {extPresent && (
           <Tooltip title="Estensione Chrome rilevata: i dati di mercato si scaricano aprendo 📊 su un articolo">
             <Tag color="green">🧩 Estensione attiva</Tag>
+          </Tooltip>
+        )}
+        {autoSync?.enabled && (
+          <Tooltip title={autoSync.last_error
+            ? `Ultimo sync automatico fallito: ${autoSync.last_error}`
+            : `L'inventario si aggiorna da solo ogni ${autoSync.interval_hours}h`}>
+            <Tag color={autoSync.last_error ? 'error' : autoSync.running ? 'processing' : 'green'}>
+              {autoSync.running
+                ? '🔄 Aggiornamento automatico in corso…'
+                : autoSync.last_success_at
+                  ? `✓ Aggiornato ${formatWhen(autoSync.last_success_at)}`
+                  : '⏳ Primo aggiornamento automatico in attesa'}
+            </Tag>
           </Tooltip>
         )}
         {pushProg && (pushProg.pending > 0 || pushProg.running) && (

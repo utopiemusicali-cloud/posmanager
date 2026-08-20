@@ -11,18 +11,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user
 from app.config import settings
-from app.database import get_company_session_maker, get_db
+from app.database import get_db
 from app.models.company_settings import CompanySettings
 from app.models.inventory_event import InventoryEvent
 from app.models.inventory_item import InventoryItem
 from app.models.release_meta import ReleaseMeta
 from app.models.release_sales import ReleaseSales
 from app.models.user import User
-from app.services import discogs_push_worker, enrich_worker, inventory_event_service
+from app.services import (auto_sync_worker, discogs_push_worker, enrich_worker,
+                          inventory_event_service)
 from app.services.discogs_scraper_service import DiscogsScraper
 from app.services.discogs_lookup_service import lookup_release
-from app.services.discogs_sync_service import sync_inventory
-from app.services.inventory_import_service import import_discogs_csv
+from app.services.inventory_sync_service import sync_company_inventory
 from app.services.inventory_service import InventoryService, get_inventory_service
 
 router = APIRouter(
@@ -168,19 +168,28 @@ async def sync_from_discogs(current_user: User = Depends(get_current_user), db: 
     token = await _company_discogs_token(db)
     if not token:
         raise HTTPException(400, "Discogs token non configurato. Vai su Impostazioni > Integrazioni.")
-    csv_dir = os.path.join(settings.INVENTORY_CSV_DIR, db_name)
     try:
-        result = await sync_inventory(token, csv_dir)
+        return await sync_company_inventory(db_name, token)
     except TimeoutError as e:
         raise HTTPException(504, str(e))
     except Exception as e:
         raise HTTPException(502, f"Errore Discogs API: {e}")
 
-    csv_path = os.path.join(csv_dir, result["filename"])
-    import_stats = await import_discogs_csv(get_company_session_maker(db_name), csv_path)
 
-    await get_inventory_service(db_name).reload()
-    return {**result, **import_stats}
+@router.get("/auto-sync-status")
+async def auto_sync_status(current_user: User = Depends(get_current_user)):
+    """Quando il sync automatico ha aggiornato l'inventario di questa azienda.
+    Serve alla UI per dire "aggiornato alle ..." invece di lasciar credere
+    che i dati vadano rinfrescati a mano."""
+    st = auto_sync_worker.state_for(_db_name(current_user))
+    return {
+        "enabled": settings.AUTO_SYNC_ENABLED,
+        "interval_hours": settings.AUTO_SYNC_INTERVAL_HOURS,
+        "running": bool(st.get("running")),
+        "last_success_at": st.get("last_success_at"),
+        "last_error": st.get("last_error", ""),
+        "last_stats": st.get("last_stats"),
+    }
 
 
 # ── Lookup release da URL Discogs ──────────────────────────────────────────────

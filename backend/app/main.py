@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -14,6 +15,7 @@ from app.config import settings
 from app.database import AsyncSessionLocal, MainSessionLocal, engine, get_company_engine, main_engine
 from app.models import Base, Company, MainBase, User, UserRole
 from app.models.company_settings import CompanySettings
+from app.services import auto_sync_worker
 from app.routers.cassa import router as cassa_router
 from app.routers.closures import router as closures_router
 from app.routers.cost_centers import router as cost_centers_router
@@ -285,8 +287,17 @@ async def lifespan(app: FastAPI):
                 await db.commit()
                 print(f"[startup] Superadmin '{settings.SUPERADMIN_USERNAME}' creato.")
 
+    # 6. Sync automatico inventario Discogs. Un solo processo lo esegue
+    # davvero (lock su MySQL), gli altri escono subito.
+    auto_sync_task = asyncio.create_task(auto_sync_worker.run_forever())
+
     yield
     # ── Shutdown ─────────────────────────────────────────────────────────────
+    auto_sync_task.cancel()
+    try:
+        await auto_sync_task
+    except (asyncio.CancelledError, Exception):
+        pass
     await main_engine.dispose()
     await engine.dispose()
 

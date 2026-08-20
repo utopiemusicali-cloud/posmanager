@@ -39,6 +39,15 @@ class Settings(BaseSettings):
     DISCOGS_PASSWORD: str = ""
     DISCOGS_STATE_PATH: str = "/inventory/discogs_state.json"
 
+    # ── Sync automatico Discogs ───────────────────────────────────────────────
+    # L'inventario deve risultare gia' aggiornato senza che l'utente prema
+    # "Aggiorna da Discogs": un worker in background rifa' il sync a intervalli.
+    # L'export Discogs richiede diversi minuti ed e' soggetto al rate limit di
+    # 60 req/min, quindi la cadenza va tenuta larga.
+    AUTO_SYNC_ENABLED: bool = True
+    AUTO_SYNC_INTERVAL_HOURS: float = 6.0   # ogni quanto rifare il sync inventario
+    AUTO_SYNC_CHECK_MINUTES: float = 15.0   # ogni quanto il worker controlla se e' ora
+
     @property
     def main_db_url(self) -> str:
         """URL del DB principale. Se non impostato, deriva da DATABASE_URL cambiando il nome DB."""
