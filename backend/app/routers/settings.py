@@ -117,7 +117,17 @@ async def update_integrations(
     row = await _get_or_create_integrations(db)
     # exclude_unset (non exclude_none): con exclude_none un flag booleano
     # messo a False verrebbe scartato, rendendo impossibile disattivarlo.
-    for k, v in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+
+    # Cambio di ambiente PayPal senza un nuovo secret: quello memorizzato
+    # appartiene all'altro ambiente e non vi autentichera' mai. Tenerlo
+    # accoppiato a un client_id del nuovo ambiente produce un 401 opaco,
+    # quindi lo si azzera per costringere a reinserirlo.
+    if data.get("paypal_sandbox") is not None and not data.get("paypal_client_secret"):
+        if bool(data["paypal_sandbox"]) != bool(row.paypal_sandbox):
+            row.paypal_client_secret = None
+
+    for k, v in data.items():
         if v is None:
             continue
         setattr(row, k, v)

@@ -60,6 +60,13 @@ export default function SettingsPage() {
   useEffect(() => { if (data) form.setFieldsValue(data) }, [data, form])
   useEffect(() => { if (intData) intForm.setFieldsValue(intData) }, [intData, intForm])
 
+  // Il secret e' legato all'ambiente: quello sandbox non autentica in
+  // produzione e viceversa. Se l'utente cambia ambiente deve reinserirlo,
+  // altrimenti resterebbe accoppiato un client_id nuovo a un secret vecchio.
+  const sandboxNow = Form.useWatch('paypal_sandbox', intForm)
+  const envChanged =
+    intData != null && sandboxNow !== undefined && sandboxNow !== intData.paypal_sandbox
+
   const saveMut = useMutation({
     mutationFn: async (values: Partial<ShopSettings>) => {
       await client.put('/api/v1/settings', values)
@@ -304,11 +311,18 @@ export default function SettingsPage() {
                 label={
                   <Space>
                     <span>PayPal Secret</span>
-                    {intData?.paypal_secret_set && <Tag color="green">configurato</Tag>}
+                    {intData?.paypal_secret_set && !envChanged && <Tag color="green">configurato</Tag>}
+                    {envChanged && <Tag color="orange">da reinserire</Tag>}
                   </Space>
                 }
                 name="paypal_client_secret"
-                extra="Per motivi di sicurezza non viene mai rimostrato. Lascia vuoto per non modificarlo."
+                extra={envChanged
+                  ? 'Stai cambiando ambiente: il secret memorizzato appartiene all'altro e non funzionerebbe. Reinseriscilo.'
+                  : 'Per motivi di sicurezza non viene mai rimostrato. Lascia vuoto per non modificarlo.'}
+                rules={envChanged
+                  ? [{ required: true, message: 'Cambiando ambiente devi reinserire il secret' }]
+                  : []}
+                validateStatus={envChanged ? 'warning' : undefined}
               >
                 <Input.Password placeholder={intData?.paypal_secret_set ? '••••••••' : 'EDxx...'} autoComplete="new-password" />
               </Form.Item>
