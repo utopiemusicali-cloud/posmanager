@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -243,6 +243,97 @@ async def sync_sumup(
         "imported": len(transactions),
         "dal": start.isoformat(),
         "al": end.isoformat(),
+    }
+
+
+@router.get("/sumup/payouts")
+async def sumup_payouts(
+    days: int = Query(90, ge=1, le=1095),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_not_viewer),
+):
+    """Versamenti SumUp del periodo, letti in diretta dall'API."""
+    api_key, merchant_code = await _sumup_credentials(db)
+    end = datetime.now(timezone.utc).date()
+    start = end - timedelta(days=days)
+    try:
+        if not merchant_code:
+            merchant_code = await sumup_service.get_merchant_code(api_key)
+        if not merchant_code:
+            raise HTTPException(
+                400,
+                "Merchant code SumUp non disponibile: inseriscilo in "
+                "Impostazioni > Integrazioni.",
+            )
+        payouts = await sumup_service.fetch_payouts(api_key, merchant_code, start, end)
+    except sumup_service.SumUpError as e:
+        raise HTTPException(400, str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"Errore durante la lettura da SumUp: {e}")
+
+    return {"payouts": payouts, "dal": start.isoformat(), "al": end.isoformat()}
+
+
+@router.get("/sumup/summary")
+async def sumup_summary(
+    days: int = Query(90, ge=1, le=1095),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_not_viewer),
+):
+    """Riepilogo economico SumUp del periodo.
+
+    ATTENZIONE: SumUp non espone il saldo del conto. 'non_ancora_versato' e'
+    una DIFFERENZA CALCOLATA fra incassato e versato nella finestra scelta,
+    non un saldo ufficiale: un versamento puo' liquidare incassi precedenti
+    all'inizio del periodo, quindi il valore e' indicativo e tanto piu'
+    attendibile quanto piu' ampia e' la finestra.
+    """
+    api_key, merchant_code = await _sumup_credentials(db)
+    end = datetime.now(timezone.utc).date()
+    start = end - timedelta(days=days)
+
+    # L'incassato si legge dal nostro DB (gia' importato), non dall'API:
+    # evita una seconda chiamata e resta coerente con la scheda Transazioni.
+    incassato = (await db.execute(
+        select(func.coalesce(func.sum(DigitalTransaction.importo), 0)).where(
+            DigitalTransaction.fonte == "SumUp",
+            DigitalTransaction.stato == "Completata",
+            DigitalTransaction.data >= datetime.combine(start, datetime.min.time()),
+        )
+    )).scalar_one()
+
+    try:
+        if not merchant_code:
+            merchant_code = await sumup_service.get_merchant_code(api_key)
+        payouts = (
+            await sumup_service.fetch_payouts(api_key, merchant_code, start, end)
+            if merchant_code else []
+        )
+    except sumup_service.SumUpError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Errore durante la lettura da SumUp: {e}")
+
+    riusciti = [p for p in payouts if (p.get("stato") or "").upper() == "SUCCESSFUL"]
+    versato = sum(p["importo"] for p in riusciti if p["tipo"] == "PAYOUT")
+    trattenute = sum(p["importo"] for p in riusciti if p["tipo"] != "PAYOUT")
+    commissioni = sum(p["commissione"] for p in riusciti)
+
+    return {
+        "dal": start.isoformat(),
+        "al": end.isoformat(),
+        "incassato": float(incassato or 0),
+        "versato": versato,
+        "trattenute": trattenute,
+        "commissioni_versamenti": commissioni,
+        "non_ancora_versato": float(incassato or 0) - versato,
+        "n_versamenti": len(riusciti),
+        # Reso esplicito nella risposta perche' chi consuma l'API non legga
+        # "non_ancora_versato" come un saldo certificato da SumUp.
+        "nota": "SumUp non espone il saldo: 'non_ancora_versato' e' una stima "
+                "calcolata come incassato meno versato nel periodo.",
     }
 
 

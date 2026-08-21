@@ -148,3 +148,59 @@ async def fetch_transactions(
             params = None
 
     return out
+
+
+# ── Versamenti (payouts) ──────────────────────────────────────────────────────
+# SumUp non espone il saldo del conto: i payouts sono il dato finanziario piu'
+# vicino, cioe' i bonifici effettivamente accreditati sul conto corrente.
+
+# Il tipo distingue gli accrediti dalle trattenute (storni, rimborsi, addebiti).
+_PAYOUT_LABELS = {
+    "PAYOUT": "Versamento",
+    "CHARGE_BACK_DEDUCTION": "Trattenuta storno",
+    "REFUND_DEDUCTION": "Trattenuta rimborso",
+    "DD_RETURN_DEDUCTION": "Trattenuta insoluto",
+    "BALANCE_DEDUCTION": "Trattenuta saldo",
+}
+
+
+async def get_merchant_code(api_key: str) -> str | None:
+    """Il merchant code serve nel percorso dei payouts. Se l'utente non l'ha
+    inserito nelle impostazioni lo si ricava dal profilo, per non costringerlo
+    a cercarlo nel dashboard SumUp."""
+    profile = await get_profile(api_key)
+    return ((profile.get("merchant_profile") or {}).get("merchant_code")) or None
+
+
+async def fetch_payouts(
+    api_key: str, merchant_code: str,
+    start: date, end: date,
+) -> list[dict]:
+    """Versamenti del periodo. A differenza delle transazioni questo endpoint
+    richiede obbligatoriamente il merchant code nel percorso."""
+    url = f"{_BASE}/v1.0/merchants/{merchant_code}/payouts"
+    async with httpx.AsyncClient(headers=_headers(api_key), timeout=60) as client:
+        resp = await client.get(url, params={
+            "start_date": start.isoformat(),
+            "end_date": end.isoformat(),
+        })
+    _raise_for(resp)
+
+    data = resp.json()
+    items = data if isinstance(data, list) else data.get("items", [])
+
+    out = []
+    for p in items:
+        tipo = (p.get("type") or "PAYOUT").upper()
+        out.append({
+            "id": p.get("id"),
+            "data": p.get("date"),
+            "tipo": tipo,
+            "tipo_label": _PAYOUT_LABELS.get(tipo, tipo),
+            "importo": float(p.get("amount") or 0),
+            "commissione": float(p.get("fee") or 0),
+            "valuta": p.get("currency"),
+            "stato": p.get("status"),
+            "riferimento": p.get("reference") or p.get("transaction_code") or "",
+        })
+    return out
