@@ -28,7 +28,7 @@ interface ShopSettings {
 interface Integrations {
   discogs_token: string | null
   discogs_username: string | null
-  sumup_api_key: string | null
+  sumup_key_set: boolean
   sumup_merchant_code: string | null
   paypal_client_id: string | null
   paypal_sandbox: boolean
@@ -76,6 +76,23 @@ export default function SettingsPage() {
       message.success('Impostazioni salvate')
     },
     onError: () => message.error('Errore nel salvataggio'),
+  })
+
+  const testSumupMut = useMutation({
+    mutationFn: async () => (await client.post('/api/v1/integrations/sumup/test')).data,
+    onSuccess: (d) =>
+      message.success(`Chiave SumUp valida${d.nome ? ` — ${d.nome}` : ''}`),
+    onError: (e: any) =>
+      message.error(e?.response?.data?.detail ?? 'Verifica SumUp fallita'),
+  })
+
+  const syncSumupMut = useMutation({
+    mutationFn: async () =>
+      (await client.post('/api/v1/integrations/sumup/sync', null, { params: { days: 90 } })).data,
+    onSuccess: (d) =>
+      message.success(`${d.imported} transazioni SumUp importate (${d.dal} → ${d.al})`),
+    onError: (e: any) =>
+      message.error(e?.response?.data?.detail ?? 'Importazione SumUp fallita'),
   })
 
   const testPaypalMut = useMutation({
@@ -246,10 +263,15 @@ export default function SettingsPage() {
             // Il secret non viene mai rimostrato: un campo lasciato vuoto
             // significa "non toccarlo", non "cancellalo". Senza questo,
             // salvare le altre impostazioni azzererebbe il secret salvato.
-            const { paypal_client_secret, ...rest } = values
-            saveIntMut.mutate(
-              paypal_client_secret ? { ...rest, paypal_client_secret } : rest,
-            )
+            // I segreti non vengono mai rimostrati: un campo lasciato vuoto
+            // significa "non toccarlo", non "cancellalo". Senza questo,
+            // salvare le altre impostazioni li azzererebbe.
+            const { paypal_client_secret, sumup_api_key, ...rest } = values
+            saveIntMut.mutate({
+              ...rest,
+              ...(paypal_client_secret ? { paypal_client_secret } : {}),
+              ...(sumup_api_key ? { sumup_api_key } : {}),
+            })
           }}
         >
           <Divider orientation="left">Discogs</Divider>
@@ -280,8 +302,20 @@ export default function SettingsPage() {
           <Divider orientation="left">SumUp</Divider>
           <Row gutter={12}>
             <Col span={16}>
-              <Form.Item label="SumUp API Key" name="sumup_api_key">
-                <Input.Password placeholder="sup_sk_..." autoComplete="off" />
+              <Form.Item
+                label={
+                  <Space>
+                    <span>SumUp API Key</span>
+                    {intData?.sumup_key_set && <Tag color="green">configurata</Tag>}
+                  </Space>
+                }
+                name="sumup_api_key"
+                extra="Non viene mai rimostrata. Lascia vuoto per non modificarla."
+              >
+                <Input.Password
+                  placeholder={intData?.sumup_key_set ? '••••••••' : 'sup_sk_...'}
+                  autoComplete="new-password"
+                />
               </Form.Item>
             </Col>
             <Col span={8}>
@@ -290,6 +324,16 @@ export default function SettingsPage() {
               </Form.Item>
             </Col>
           </Row>
+
+          <Space style={{ marginBottom: 16 }}>
+            <Button icon={<ApiOutlined />} onClick={() => testSumupMut.mutate()}
+                    loading={testSumupMut.isPending}>
+              Verifica connessione
+            </Button>
+            <Button onClick={() => syncSumupMut.mutate()} loading={syncSumupMut.isPending}>
+              Importa transazioni (90 giorni)
+            </Button>
+          </Space>
 
           <Divider orientation="left">PayPal</Divider>
           <Alert

@@ -16,11 +16,20 @@ export default function TransactionsTab({ fonte }: Props) {
     },
   })
 
+  // SumUp e PayPal salvano stati gia' normalizzati in italiano: il colore
+  // dipende dall'esito, non dalla fonte.
+  const statoColor = (v: string) => {
+    if (['Completata', 'SUCCESSFUL', 'Completed'].includes(v)) return 'green'
+    if (['Fallita', 'Negata', 'Annullata'].includes(v)) return 'red'
+    if (['Stornata', 'Rimborsata'].includes(v)) return 'purple'
+    return 'orange'
+  }
+
   const columns = [
     { title: 'Data', dataIndex: 'data', render: (v: string) => dayjs(v).format('DD/MM/YYYY'), width: 110 },
     { title: 'ID', dataIndex: 'transaction_id', width: 160 },
     { title: 'Tipo', dataIndex: 'tipo', width: 100 },
-    { title: 'Stato', dataIndex: 'stato', render: (v: string) => <Tag color={v === 'SUCCESSFUL' || v === 'Completed' ? 'green' : 'orange'}>{v}</Tag>, width: 110 },
+    { title: 'Stato', dataIndex: 'stato', render: (v: string) => <Tag color={statoColor(v)}>{v || '—'}</Tag>, width: 110 },
     { title: 'Carta', dataIndex: 'carta', width: 120 },
     { title: 'Importo', dataIndex: 'importo', render: (v: number) => `${Number(v ?? 0).toFixed(2)} €`, width: 100 },
   ]

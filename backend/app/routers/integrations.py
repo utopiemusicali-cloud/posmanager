@@ -13,7 +13,7 @@ from app.config import settings
 from app.database import get_db
 from app.models.company_settings import CompanySettings
 from app.models.digital_transaction import DigitalTransaction
-from app.services import paypal_service
+from app.services import paypal_service, sumup_service
 from app.services.discogs_orders_service import (
     ORDER_STATUSES, cancel_order, fetch_all_orders, fetch_orders,
     get_order_messages, mark_as_shipped,
@@ -173,9 +173,77 @@ async def get_order_statuses():
 
 # ── Stub SumUp / PayPal ───────────────────────────────────────────────────────
 
-@router.get("/sumup/sync")
-async def sync_sumup():
-    return {"status": "not_implemented"}
+# ── SumUp: importazione transazioni (sola lettura) ────────────────────────────
+
+async def _sumup_credentials(db: AsyncSession) -> tuple[str, str | None]:
+    cs = (await db.execute(select(CompanySettings))).scalars().first()
+    api_key = cs.sumup_api_key if cs else None
+    if not api_key:
+        raise HTTPException(
+            400,
+            "Chiave API SumUp non configurata. Vai su Impostazioni > Integrazioni "
+            "e inserisci la secret key (sup_sk_...).",
+        )
+    return api_key, (cs.sumup_merchant_code or None)
+
+
+@router.post("/sumup/test")
+async def test_sumup(db: AsyncSession = Depends(get_db), _=Depends(require_not_viewer)):
+    """Verifica la chiave API e mostra a quale conto e' collegata."""
+    api_key, _merchant = await _sumup_credentials(db)
+    try:
+        profile = await sumup_service.get_profile(api_key)
+    except sumup_service.SumUpError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Errore di rete verso SumUp: {e}")
+
+    account = profile.get("merchant_profile") or {}
+    return {
+        "ok": True,
+        "merchant_code": account.get("merchant_code"),
+        "nome": account.get("company_name") or profile.get("account", {}).get("username"),
+    }
+
+
+@router.post("/sumup/sync")
+async def sync_sumup(
+    days: int = Query(90, ge=1, le=1095),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_not_viewer),
+):
+    """Importa le transazioni SumUp degli ultimi `days` giorni in
+    digital_transactions. Idempotente: il vincolo di unicita' su
+    (fonte, transaction_id) fa sì che rilanciarlo aggiorni invece di duplicare."""
+    api_key, merchant_code = await _sumup_credentials(db)
+
+    end = datetime.now(timezone.utc).date()
+    start = end - timedelta(days=days)
+    try:
+        transactions = await sumup_service.fetch_transactions(
+            api_key, merchant_code, start, end
+        )
+    except sumup_service.SumUpError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Errore durante la lettura da SumUp: {e}")
+
+    for tx in transactions:
+        stmt = (
+            mysql_insert(DigitalTransaction)
+            .values(**tx)
+            .on_duplicate_key_update(
+                **{k: v for k, v in tx.items() if k not in ("fonte", "transaction_id")}
+            )
+        )
+        await db.execute(stmt)
+    await db.commit()
+
+    return {
+        "imported": len(transactions),
+        "dal": start.isoformat(),
+        "al": end.isoformat(),
+    }
 
 
 # ── PayPal: importazione transazioni (sola lettura) ───────────────────────────

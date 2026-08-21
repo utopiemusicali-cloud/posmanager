@@ -54,7 +54,9 @@ async def update_settings(
 class IntegrationsRead(BaseModel):
     discogs_token: str | None
     discogs_username: str | None
-    sumup_api_key: str | None
+    # La chiave SumUp e' un segreto: come per PayPal non viene mai
+    # restituita, si comunica solo se e' stata configurata.
+    sumup_key_set: bool = False
     sumup_merchant_code: str | None
     paypal_client_id: str | None
     paypal_sandbox: bool = True
@@ -81,7 +83,7 @@ def _to_read(row: CompanySettings) -> IntegrationsRead:
     return IntegrationsRead(
         discogs_token=row.discogs_token,
         discogs_username=row.discogs_username,
-        sumup_api_key=row.sumup_api_key,
+        sumup_key_set=bool(row.sumup_api_key),
         sumup_merchant_code=row.sumup_merchant_code,
         paypal_client_id=row.paypal_client_id,
         paypal_sandbox=bool(row.paypal_sandbox),
