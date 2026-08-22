@@ -276,6 +276,46 @@ async def sumup_payouts(
     return {"payouts": payouts, "dal": start.isoformat(), "al": end.isoformat()}
 
 
+@router.get("/sumup/receipt/{transaction_id}")
+async def sumup_receipt(
+    transaction_id: str,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_not_viewer),
+):
+    """Ricevuta completa di una transazione: righe, IVA per aliquota ed eventi.
+
+    Accetta sia l'id tecnico sia il transaction_code: se arriva il secondo si
+    risale al primo dal nostro archivio, perche' la tabella mostra il codice
+    ma SumUp vuole l'id.
+    """
+    api_key, merchant_code = await _sumup_credentials(db)
+
+    tx_id = transaction_id
+    row = (await db.execute(
+        select(DigitalTransaction).where(
+            DigitalTransaction.fonte == "SumUp",
+            DigitalTransaction.transaction_id == transaction_id,
+        )
+    )).scalars().first()
+    if row and row.provider_id:
+        tx_id = row.provider_id
+
+    try:
+        if not merchant_code:
+            merchant_code = await sumup_service.get_merchant_code(api_key)
+        if not merchant_code:
+            raise HTTPException(400, "Merchant code SumUp non disponibile.")
+        raw = await sumup_service.get_receipt(api_key, merchant_code, tx_id)
+    except sumup_service.SumUpError as e:
+        raise HTTPException(400, str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"Errore durante la lettura da SumUp: {e}")
+
+    return sumup_service.normalize_receipt(raw)
+
+
 @router.get("/sumup/summary")
 async def sumup_summary(
     days: int = Query(90, ge=1, le=1095),

@@ -1,12 +1,17 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Table, Tag } from 'antd'
+import { Table, Tag, Button, Tooltip } from 'antd'
+import { FileTextOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import client from '@/api/client'
 
-interface Props { fonte: string }
+interface Props {
+  fonte: string
+  // Passato solo da SumUp: PayPal non ha un equivalente delle ricevute.
+  onReceipt?: (transactionId: string) => void
+}
 
-export default function TransactionsTab({ fonte }: Props) {
+export default function TransactionsTab({ fonte, onReceipt }: Props) {
   const [page, setPage] = useState(1)
   const { data, isLoading } = useQuery({
     queryKey: ['transactions', fonte, page],
@@ -32,6 +37,15 @@ export default function TransactionsTab({ fonte }: Props) {
     { title: 'Stato', dataIndex: 'stato', render: (v: string) => <Tag color={statoColor(v)}>{v || '—'}</Tag>, width: 110 },
     { title: 'Carta', dataIndex: 'carta', width: 120 },
     { title: 'Importo', dataIndex: 'importo', render: (v: number) => `${Number(v ?? 0).toFixed(2)} €`, width: 100 },
+    ...(onReceipt ? [{
+      title: '', key: 'receipt', width: 44, align: 'center' as const,
+      render: (_: unknown, r: any) => (
+        <Tooltip title="Ricevuta, IVA e stato dell'incasso">
+          <Button size="small" type="text" icon={<FileTextOutlined />}
+            onClick={() => onReceipt(r.transaction_id)} />
+        </Tooltip>
+      ),
+    }] : []),
   ]
 
   return (

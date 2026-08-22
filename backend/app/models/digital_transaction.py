@@ -18,6 +18,11 @@ class DigitalTransaction(Base):
     data: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
     ora: Mapped[str | None] = mapped_column(String(8))
     transaction_id: Mapped[str | None] = mapped_column(String(128))
+    # Identificativo interno del provider, distinto da transaction_id.
+    # Per SumUp transaction_id contiene il transaction_code (quello che il
+    # commerciante vede su scontrini ed estratti conto e usa per riconciliare),
+    # mentre le ricevute si richiedono con l'id tecnico: servono entrambi.
+    provider_id: Mapped[str | None] = mapped_column(String(128))
     importo: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     valuta: Mapped[str | None] = mapped_column(String(8))
     stato: Mapped[str | None] = mapped_column(String(64))

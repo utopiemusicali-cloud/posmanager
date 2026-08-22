@@ -90,6 +90,9 @@ def to_transaction(item: dict) -> dict | None:
     return {
         "fonte": "SumUp",
         "transaction_id": str(tx_id),
+        # Id tecnico, necessario per richiedere la ricevuta: e' diverso dal
+        # transaction_code usato come chiave di riconciliazione.
+        "provider_id": str(item.get("id") or "") or None,
         "data": dt.replace(tzinfo=None),
         "ora": dt.strftime("%H:%M:%S"),
         "importo": _amount(item.get("amount")),
@@ -204,3 +207,96 @@ async def fetch_payouts(
             "riferimento": p.get("reference") or p.get("transaction_code") or "",
         })
     return out
+
+
+# ── Ricevute ──────────────────────────────────────────────────────────────────
+
+async def get_receipt(api_key: str, merchant_code: str, transaction_id: str) -> dict:
+    """Dettaglio completo della ricevuta: righe prodotto, ripartizione IVA per
+    aliquota, dati carta ed eventi (versamento, storno, rimborso) della singola
+    transazione.
+
+    Richiede lo scope receipts.read sulla chiave API: se manca, SumUp risponde
+    403 pur essendo la chiave valida per il resto.
+    """
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            f"{_BASE}/v1.1/receipts/{transaction_id}",
+            headers=_headers(api_key),
+            params={"mid": merchant_code},
+        )
+    if resp.status_code == 404:
+        raise SumUpError("Ricevuta non trovata per questa transazione.")
+    if resp.status_code == 403:
+        raise SumUpError(
+            "SumUp nega l'accesso alle ricevute: la chiave API non ha lo scope "
+            "receipts.read. Rigenerala dal dashboard includendo quel permesso."
+        )
+    _raise_for(resp)
+    return resp.json()
+
+
+def normalize_receipt(raw: dict) -> dict:
+    """Estrae dal payload SumUp i dati che servono in contabilita', appiattendo
+    la struttura annidata."""
+    tx = raw.get("transaction_data") or {}
+    merchant = (raw.get("merchant_data") or {}).get("merchant_profile") or {}
+    card = tx.get("card") or {}
+    acquirer = raw.get("acquirer_data") or {}
+
+    def _f(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    return {
+        "numero_ricevuta": tx.get("receipt_no"),
+        "transaction_code": tx.get("transaction_code"),
+        "data": tx.get("timestamp"),
+        "stato": tx.get("status"),
+        "importo": _f(tx.get("amount")),
+        "iva_totale": _f(tx.get("vat_amount")),
+        "mancia": _f(tx.get("tip_amount")),
+        "valuta": tx.get("currency"),
+        "tipo_pagamento": tx.get("payment_type"),
+        "modalita_inserimento": tx.get("entry_mode"),
+        "verifica": tx.get("verification_method"),
+        "carta_tipo": card.get("type"),
+        "carta_ultime4": card.get("last_4_digits"),
+        "codice_autorizzazione": acquirer.get("authorization_code"),
+        "esercente": merchant.get("business_name"),
+        "partita_iva": merchant.get("vat_id"),
+        "prodotti": [
+            {
+                "nome": p.get("name"),
+                "descrizione": p.get("description"),
+                "prezzo": _f(p.get("price")),
+                "quantita": p.get("quantity"),
+                "aliquota": _f(p.get("vat_rate")),
+                "iva": _f(p.get("vat_amount")),
+                "totale": _f(p.get("total_price")),
+            }
+            for p in (tx.get("products") or [])
+        ],
+        "iva_per_aliquota": [
+            {
+                "aliquota": _f(v.get("rate")),
+                "imponibile": _f(v.get("net")),
+                "iva": _f(v.get("vat")),
+                "lordo": _f(v.get("gross")),
+            }
+            for v in (tx.get("vat_rates") or [])
+        ],
+        # Dice se questo singolo incasso e' gia' stato versato, stornato o
+        # rimborsato: e' il dato che collega la vendita al bonifico.
+        "eventi": [
+            {
+                "tipo": e.get("type"),
+                "stato": e.get("status"),
+                "importo": _f(e.get("amount")),
+                "data": e.get("timestamp"),
+            }
+            for e in (tx.get("events") or [])
+        ],
+    }

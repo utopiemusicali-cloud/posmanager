@@ -5,6 +5,7 @@ import { InfoCircleOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import client from '@/api/client'
 import TransactionsTab from './TransactionsTab'
+import SumUpReceiptDrawer from './SumUpReceiptDrawer'
 
 interface Payout {
   id: number
@@ -22,6 +23,7 @@ const eur = (v: number) => `${Number(v ?? 0).toFixed(2)} €`
 
 export default function SumUpTab() {
   const [days, setDays] = useState(90)
+  const [receiptTx, setReceiptTx] = useState<string | null>(null)
 
   const { data: summary, isLoading: loadingSummary, error: summaryError } = useQuery({
     queryKey: ['sumup-summary', days],
@@ -143,7 +145,12 @@ export default function SumUpTab() {
       />
 
       <Divider orientation="left" plain>Transazioni</Divider>
-      <TransactionsTab fonte="SumUp" />
+      <TransactionsTab fonte="SumUp" onReceipt={setReceiptTx} />
+
+      <SumUpReceiptDrawer
+        transactionId={receiptTx}
+        onClose={() => setReceiptTx(null)}
+      />
     </div>
   )
 }

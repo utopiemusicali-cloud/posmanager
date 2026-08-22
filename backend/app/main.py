@@ -95,6 +95,18 @@ async def _migrate_company_db(conn) -> None:
                 f"ALTER TABLE daily_closures ADD COLUMN {col_name} {col_def}"
             ))
 
+    # provider_id su digital_transactions: create_all non aggiunge colonne a
+    # tabelle gia' esistenti, quindi la migrazione va dichiarata qui.
+    pid_exists = (await conn.execute(text(
+        "SELECT COUNT(*) FROM information_schema.COLUMNS "
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'digital_transactions' "
+        "AND COLUMN_NAME = 'provider_id'"
+    ))).scalar()
+    if not pid_exists:
+        await conn.execute(text(
+            "ALTER TABLE digital_transactions ADD COLUMN provider_id VARCHAR(128) NULL"
+        ))
+
     # Flag ambiente PayPal. create_all crea le tabelle mancanti ma non le
     # colonne nuove su tabelle gia' esistenti: senza questa migrazione la
     # colonna arriverebbe solo ai DB creati da zero.
