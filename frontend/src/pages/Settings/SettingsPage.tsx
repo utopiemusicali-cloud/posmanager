@@ -361,8 +361,8 @@ export default function SettingsPage() {
                 }
                 name="paypal_client_secret"
                 extra={envChanged
-                  ? 'Stai cambiando ambiente: il secret memorizzato appartiene all'altro e non funzionerebbe. Reinseriscilo.'
-                  : 'Per motivi di sicurezza non viene mai rimostrato. Lascia vuoto per non modificarlo.'}
+                  ? "Stai cambiando ambiente: il secret memorizzato appartiene all'altro e non funzionerebbe. Reinseriscilo."
+                  : "Per motivi di sicurezza non viene mai rimostrato. Lascia vuoto per non modificarlo."}
                 rules={envChanged
                   ? [{ required: true, message: 'Cambiando ambiente devi reinserire il secret' }]
                   : []}
