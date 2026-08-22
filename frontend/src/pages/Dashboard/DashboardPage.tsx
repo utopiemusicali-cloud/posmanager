@@ -6,6 +6,7 @@ import ClosuresTab from './tabs/ClosuresTab'
 import ReceiptsTab from './tabs/ReceiptsTab'
 import TransactionsTab from './tabs/TransactionsTab'
 import SumUpTab from './tabs/SumUpTab'
+import BankTab from './tabs/BankTab'
 
 const items = [
   { key: 'cash', label: '💵 Cassa Contante', children: <CashTab /> },
@@ -13,6 +14,7 @@ const items = [
   { key: 'receipts', label: '🧾 Ricevute', children: <ReceiptsTab /> },
   { key: 'sessions', label: '📖 Sessioni', children: <SessionsTab /> },
   { key: 'closures', label: '📋 Chiusure', children: <ClosuresTab /> },
+  { key: 'bank', label: '🏦 Conto', children: <BankTab /> },
   { key: 'sumup', label: '💳 SumUp', children: <SumUpTab /> },
   { key: 'paypal', label: '🅿️ PayPal', children: <TransactionsTab fonte="PayPal" /> },
 ]

@@ -16,6 +16,7 @@ from app.database import AsyncSessionLocal, MainSessionLocal, engine, get_compan
 from app.models import Base, Company, MainBase, User, UserRole
 from app.models.company_settings import CompanySettings
 from app.services import auto_sync_worker
+from app.routers.bank import router as bank_router
 from app.routers.cassa import router as cassa_router
 from app.routers.closures import router as closures_router
 from app.routers.cost_centers import router as cost_centers_router
@@ -334,6 +335,7 @@ app.add_middleware(
 
 # Routers
 app.include_router(auth_router)
+app.include_router(bank_router)
 app.include_router(cassa_router)
 app.include_router(expenses_router)
 app.include_router(sessions_router)
