@@ -13,7 +13,7 @@ from app.config import settings
 from app.database import get_db
 from app.models.company_settings import CompanySettings
 from app.models.digital_transaction import DigitalTransaction
-from app.services import paypal_service, sumup_service
+from app.services import ebay_service, paypal_service, sumup_service
 from app.services.discogs_orders_service import (
     ORDER_STATUSES, cancel_order, fetch_all_orders, fetch_orders,
     get_order_messages, mark_as_shipped,
@@ -172,6 +172,102 @@ async def get_order_statuses():
 
 
 # ── Stub SumUp / PayPal ───────────────────────────────────────────────────────
+
+# ── eBay: credenziali e autorizzazione ────────────────────────────────────────
+
+async def _ebay_settings(db: AsyncSession) -> CompanySettings:
+    cs = (await db.execute(select(CompanySettings))).scalars().first()
+    if not cs or not cs.ebay_app_id or not cs.ebay_cert_id:
+        raise HTTPException(
+            400,
+            "Credenziali eBay non configurate. Vai su Impostazioni > "
+            "Integrazioni e inserisci App ID e Cert ID.",
+        )
+    return cs
+
+
+@router.post("/ebay/test")
+async def test_ebay(db: AsyncSession = Depends(get_db), _=Depends(require_not_viewer)):
+    """Verifica App ID e Cert ID ottenendo un token applicativo.
+
+    ATTENZIONE: un esito positivo NON significa poter leggere inventario e
+    ordini. Il token applicativo prova solo che l'app esiste; le API Sell
+    richiedono il token utente, che nasce dal consenso del venditore.
+    """
+    cs = await _ebay_settings(db)
+    try:
+        data = await ebay_service.get_application_token(
+            cs.ebay_app_id, cs.ebay_cert_id, bool(cs.ebay_sandbox)
+        )
+    except ebay_service.EbayError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Errore di rete verso eBay: {e}")
+
+    return {
+        "ok": True,
+        "ambiente": "sandbox" if cs.ebay_sandbox else "produzione",
+        "scade_tra_secondi": data.get("expires_in"),
+        "autorizzazione_venditore": bool(cs.ebay_refresh_token),
+        "nota": (
+            "Credenziali applicative valide. Per leggere inventario e ordini "
+            "serve anche l'autorizzazione del venditore."
+            if not cs.ebay_refresh_token else
+            "Credenziali valide e autorizzazione venditore presente."
+        ),
+    }
+
+
+@router.get("/ebay/consent-url")
+async def ebay_consent_url(db: AsyncSession = Depends(get_db),
+                           _=Depends(require_not_viewer)):
+    """URL a cui mandare il venditore per autorizzare l'applicazione.
+
+    Il codice che eBay restituisce al ritorno va scambiato con un refresh
+    token: quello scambio richiede una pagina di ritorno pubblica registrata
+    su eBay come RuName, e non e' ancora realizzato. Per ora l'URL serve a chi
+    vuole completare il consenso manualmente.
+    """
+    cs = await _ebay_settings(db)
+    if not cs.ebay_ru_name:
+        raise HTTPException(
+            400,
+            "RuName non configurato: e' il nome della URL di ritorno "
+            "registrata su eBay, necessario per il consenso del venditore.",
+        )
+    return {
+        "url": ebay_service.consent_url(
+            cs.ebay_app_id, cs.ebay_ru_name, bool(cs.ebay_sandbox)
+        ),
+        "ambiente": "sandbox" if cs.ebay_sandbox else "produzione",
+        "scope": ebay_service.SELL_SCOPES,
+    }
+
+
+@router.post("/ebay/user-token")
+async def ebay_user_token(db: AsyncSession = Depends(get_db),
+                          _=Depends(require_not_viewer)):
+    """Verifica che il refresh token salvato sia ancora valido, rinnovando
+    l'access token utente. Non restituisce mai il token: solo l'esito."""
+    cs = await _ebay_settings(db)
+    if not cs.ebay_refresh_token:
+        raise HTTPException(
+            400,
+            "Nessuna autorizzazione venditore salvata: serve il refresh token "
+            "ottenuto dal consenso su eBay.",
+        )
+    try:
+        data = await ebay_service.get_user_token(
+            cs.ebay_app_id, cs.ebay_cert_id, cs.ebay_refresh_token,
+            bool(cs.ebay_sandbox),
+        )
+    except ebay_service.EbayError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Errore di rete verso eBay: {e}")
+
+    return {"ok": True, "scade_tra_secondi": data.get("expires_in")}
+
 
 # ── SumUp: importazione transazioni (sola lettura) ────────────────────────────
 

@@ -121,6 +121,27 @@ async def _migrate_company_db(conn) -> None:
             "ADD COLUMN paypal_sandbox TINYINT(1) NOT NULL DEFAULT 1"
         ))
 
+    # Credenziali eBay: colonne nuove su una tabella esistente, quindi
+    # create_all non le aggiunge da solo.
+    for col_name, col_def in [
+        ("ebay_app_id", "VARCHAR(255) NULL"),
+        ("ebay_cert_id", "VARCHAR(255) NULL"),
+        ("ebay_dev_id", "VARCHAR(255) NULL"),
+        ("ebay_ru_name", "VARCHAR(255) NULL"),
+        ("ebay_refresh_token", "TEXT NULL"),
+        ("ebay_sandbox", "TINYINT(1) NOT NULL DEFAULT 1"),
+    ]:
+        exists = (await conn.execute(text(
+            "SELECT COUNT(*) FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() "
+            "AND TABLE_NAME = 'company_settings_integrations' "
+            f"AND COLUMN_NAME = '{col_name}'"
+        ))).scalar()
+        if not exists:
+            await conn.execute(text(
+                f"ALTER TABLE company_settings_integrations ADD COLUMN {col_name} {col_def}"
+            ))
+
     # metodo_pagamento su shop_receipts: allarga a VARCHAR(128)
     mp_size = (await conn.execute(text(
         "SELECT CHARACTER_MAXIMUM_LENGTH FROM information_schema.COLUMNS "

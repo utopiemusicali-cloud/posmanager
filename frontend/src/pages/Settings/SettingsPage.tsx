@@ -33,6 +33,12 @@ interface Integrations {
   paypal_client_id: string | null
   paypal_sandbox: boolean
   paypal_secret_set: boolean
+  ebay_app_id: string | null
+  ebay_dev_id: string | null
+  ebay_ru_name: string | null
+  ebay_sandbox: boolean
+  ebay_cert_set: boolean
+  ebay_refresh_set: boolean
   currency: string
 }
 
@@ -76,6 +82,24 @@ export default function SettingsPage() {
       message.success('Impostazioni salvate')
     },
     onError: () => message.error('Errore nel salvataggio'),
+  })
+
+  const testEbayMut = useMutation({
+    mutationFn: async () => (await client.post('/api/v1/integrations/ebay/test')).data,
+    onSuccess: (d) => {
+      message.success(`Credenziali eBay valide (${d.ambiente})`)
+      if (!d.autorizzazione_venditore) message.info(d.nota, 8)
+    },
+    onError: (e: any) =>
+      message.error(e?.response?.data?.detail ?? 'Verifica eBay fallita'),
+  })
+
+  const ebayConsentMut = useMutation({
+    mutationFn: async () =>
+      (await client.get('/api/v1/integrations/ebay/consent-url')).data,
+    onSuccess: (d) => window.open(d.url, '_blank', 'noopener'),
+    onError: (e: any) =>
+      message.error(e?.response?.data?.detail ?? 'Impossibile generare il link'),
   })
 
   const testSumupMut = useMutation({
@@ -228,6 +252,90 @@ export default function SettingsPage() {
             <Input.TextArea rows={2} placeholder="Testo che appare in fondo alla ricevuta stampata" />
           </Form.Item>
 
+          <Divider orientation="left">eBay</Divider>
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="App ID e Cert ID da soli non bastano"
+            description="Danno accesso ai soli dati pubblici. Per leggere inventario e ordini eBay richiede l'autorizzazione del venditore tramite consenso nel browser, che produce un refresh token valido circa 18 mesi."
+          />
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item label="App ID (Client ID)" name="ebay_app_id">
+                <Input placeholder="MyApp-1a2b3c-PRD-..." autoComplete="off" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                label={
+                  <Space>
+                    <span>Cert ID (Client Secret)</span>
+                    {intData?.ebay_cert_set && <Tag color="green">configurato</Tag>}
+                  </Space>
+                }
+                name="ebay_cert_id"
+                extra="Non viene mai rimostrato. Lascia vuoto per non modificarlo."
+              >
+                <Input.Password
+                  placeholder={intData?.ebay_cert_set ? '••••••••' : 'PRD-1a2b...'}
+                  autoComplete="new-password"
+                />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item label="Dev ID" name="ebay_dev_id">
+                <Input placeholder="1a2b3c4d-..." autoComplete="off" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                label="RuName"
+                name="ebay_ru_name"
+                extra="Nome della URL di ritorno registrata su eBay, serve per il consenso."
+              >
+                <Input placeholder="Mio_Nome-MyApp-1a2b3-abcdef" autoComplete="off" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item
+            label={
+              <Space>
+                <span>Refresh token venditore</span>
+                {intData?.ebay_refresh_set
+                  ? <Tag color="green">autorizzazione presente</Tag>
+                  : <Tag color="orange">mancante</Tag>}
+              </Space>
+            }
+            name="ebay_refresh_token"
+            extra="Si ottiene completando il consenso su eBay. Senza questo, inventario e ordini non sono leggibili."
+          >
+            <Input.Password
+              placeholder={intData?.ebay_refresh_set ? '••••••••' : 'v^1.1#i^1#...'}
+              autoComplete="new-password"
+            />
+          </Form.Item>
+          <Form.Item
+            label="Ambiente sandbox"
+            name="ebay_sandbox"
+            valuePropName="checked"
+            extra="Cambiando ambiente, Cert ID e refresh token vanno reinseriti: valgono solo per l'ambiente in cui sono stati creati."
+          >
+            <Switch checkedChildren="Sandbox" unCheckedChildren="Produzione" />
+          </Form.Item>
+          <Space style={{ marginBottom: 16 }} wrap>
+            <Button icon={<ApiOutlined />} onClick={() => testEbayMut.mutate()}
+                    loading={testEbayMut.isPending}>
+              Verifica credenziali
+            </Button>
+            <Button onClick={() => ebayConsentMut.mutate()}
+                    loading={ebayConsentMut.isPending}>
+              Apri consenso venditore
+            </Button>
+          </Space>
+
           <Form.Item style={{ marginBottom: 0 }}>
             <Button
               type="primary"
@@ -266,11 +374,16 @@ export default function SettingsPage() {
             // I segreti non vengono mai rimostrati: un campo lasciato vuoto
             // significa "non toccarlo", non "cancellalo". Senza questo,
             // salvare le altre impostazioni li azzererebbe.
-            const { paypal_client_secret, sumup_api_key, ...rest } = values
+            const {
+              paypal_client_secret, sumup_api_key,
+              ebay_cert_id, ebay_refresh_token, ...rest
+            } = values
             saveIntMut.mutate({
               ...rest,
               ...(paypal_client_secret ? { paypal_client_secret } : {}),
               ...(sumup_api_key ? { sumup_api_key } : {}),
+              ...(ebay_cert_id ? { ebay_cert_id } : {}),
+              ...(ebay_refresh_token ? { ebay_refresh_token } : {}),
             })
           }}
         >

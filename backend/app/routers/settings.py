@@ -60,6 +60,13 @@ class IntegrationsRead(BaseModel):
     sumup_merchant_code: str | None
     paypal_client_id: str | None
     paypal_sandbox: bool = True
+    ebay_app_id: str | None = None
+    ebay_dev_id: str | None = None
+    ebay_ru_name: str | None = None
+    ebay_sandbox: bool = True
+    # Cert ID e refresh token sono segreti: si comunica solo se ci sono.
+    ebay_cert_set: bool = False
+    ebay_refresh_set: bool = False
     # Il secret non viene mai restituito: l'interfaccia deve solo sapere se
     # e' stato configurato, per non riesporlo a ogni apertura della pagina.
     paypal_secret_set: bool = False
@@ -76,6 +83,12 @@ class IntegrationsUpdate(BaseModel):
     paypal_client_id: str | None = None
     paypal_client_secret: str | None = None
     paypal_sandbox: bool | None = None
+    ebay_app_id: str | None = None
+    ebay_cert_id: str | None = None
+    ebay_dev_id: str | None = None
+    ebay_ru_name: str | None = None
+    ebay_refresh_token: str | None = None
+    ebay_sandbox: bool | None = None
     currency: str | None = None
 
 
@@ -88,6 +101,12 @@ def _to_read(row: CompanySettings) -> IntegrationsRead:
         paypal_client_id=row.paypal_client_id,
         paypal_sandbox=bool(row.paypal_sandbox),
         paypal_secret_set=bool(row.paypal_client_secret),
+        ebay_app_id=row.ebay_app_id,
+        ebay_dev_id=row.ebay_dev_id,
+        ebay_ru_name=row.ebay_ru_name,
+        ebay_sandbox=bool(row.ebay_sandbox),
+        ebay_cert_set=bool(row.ebay_cert_id),
+        ebay_refresh_set=bool(row.ebay_refresh_token),
         currency=row.currency,
     )
 
@@ -129,6 +148,15 @@ async def update_integrations(
         if bool(data["paypal_sandbox"]) != bool(row.paypal_sandbox):
             row.paypal_client_secret = None
 
+    # Stessa logica per eBay, con in piu' il refresh token: e' legato al
+    # consenso dato su UN ambiente e nell'altro non vale nulla.
+    if data.get("ebay_sandbox") is not None:
+        if bool(data["ebay_sandbox"]) != bool(row.ebay_sandbox):
+            if not data.get("ebay_cert_id"):
+                row.ebay_cert_id = None
+            if not data.get("ebay_refresh_token"):
+                row.ebay_refresh_token = None
+
     for k, v in data.items():
         if v is None:
             continue
@@ -137,6 +165,8 @@ async def update_integrations(
         if isinstance(v, str) and k in (
             "discogs_token", "sumup_api_key", "sumup_merchant_code",
             "paypal_client_id", "paypal_client_secret",
+            "ebay_app_id", "ebay_cert_id", "ebay_dev_id", "ebay_ru_name",
+            "ebay_refresh_token",
         ):
             v = v.strip()
         setattr(row, k, v)
