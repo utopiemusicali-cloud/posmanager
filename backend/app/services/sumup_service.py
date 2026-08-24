@@ -34,17 +34,35 @@ class SumUpError(RuntimeError):
 
 
 def _headers(api_key: str) -> dict:
-    return {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    # Uno spazio o un a capo incollati insieme alla chiave producono un 401
+    # indistinguibile da una chiave sbagliata: si ripuliscono qui, cosi' vale
+    # anche per le chiavi gia' salvate in passato.
+    return {
+        "Authorization": "Bearer " + (api_key or "").strip(),
+        "Content-Type": "application/json",
+    }
 
 
 def _raise_for(resp: httpx.Response) -> None:
-    if resp.status_code in (401, 403):
+    # 401 e 403 hanno cause opposte e vanno tenuti distinti: nel primo caso la
+    # chiave non e' valida, nel secondo e' valida ma non ha i permessi. Dare lo
+    # stesso messaggio manda l'utente a rigenerare una chiave che funziona.
+    if resp.status_code == 401:
         raise SumUpError(
-            "SumUp ha rifiutato la chiave API. Verifica di aver incollato una "
-            "secret key valida (inizia con sup_sk_) e che non sia stata revocata."
+            "SumUp non riconosce la chiave API (401). Controlla di aver "
+            "incollato una secret key che inizia con sup_sk_, senza spazi "
+            "iniziali o finali, e che non sia stata revocata. "
+            "Risposta di SumUp: " + resp.text[:200]
+        )
+    if resp.status_code == 403:
+        raise SumUpError(
+            "La chiave API e' valida ma non ha i permessi per questa "
+            "operazione (403). Rigenerala dal dashboard SumUp includendo gli "
+            "scope di lettura su profilo, transazioni, payouts e ricevute. "
+            "Risposta di SumUp: " + resp.text[:200]
         )
     if resp.status_code >= 400:
-        raise SumUpError(f"SumUp ha risposto {resp.status_code}: {resp.text[:200]}")
+        raise SumUpError("SumUp ha risposto %d: %s" % (resp.status_code, resp.text[:200]))
 
 
 async def get_profile(api_key: str) -> dict:

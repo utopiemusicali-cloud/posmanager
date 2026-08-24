@@ -132,6 +132,13 @@ async def update_integrations(
     for k, v in data.items():
         if v is None:
             continue
+        # Le credenziali si incollano, e con l'incollatura arrivano spazi
+        # invisibili che i provider rifiutano come chiave errata.
+        if isinstance(v, str) and k in (
+            "discogs_token", "sumup_api_key", "sumup_merchant_code",
+            "paypal_client_id", "paypal_client_secret",
+        ):
+            v = v.strip()
         setattr(row, k, v)
     await db.flush()
     await db.refresh(row)
